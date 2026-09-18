@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f5f1" />
+    <title>RV / VISION</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="boot" id="boot" aria-hidden="true">
+      <div class="boot-mark">RV</div>
+      <div class="boot-line"><span></span></div>
+    </div>
+
+    <div class="app">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="RV Vision 首页">
+          <span class="brand-mark">RV</span>
+          <span class="brand-copy"><strong>VISION</strong><small>CAMERA RECEIVER</small></span>
+        </a>
+        <div class="clock" aria-label="当前时间">
+          <strong id="clock">--:--:--</strong><small id="date">----</small>
+        </div>
+      </header>
+
+      <div class="shell">
+        <aside class="rail">
+          <p class="eyebrow">画面范围</p>
+          <nav class="filters" aria-label="视频筛选">
+            <button class="filter is-active" data-filter="all"><span>全部通道</span><b id="countAll">0 / 8</b></button>
+            <button class="filter" data-filter="lower"><span>下层板</span><b id="countLower">0 / 4</b></button>
+            <button class="filter" data-filter="upper"><span>上层板</span><b id="countUpper">0 / 4</b></button>
+          </nav>
+
+          <div class="rail-spacer"></div>
+          <div class="legend">
+            <p><i class="dot online"></i>在线</p>
+            <p><i class="dot waiting"></i>等待信号</p>
+            <p><i class="dot offline"></i>离线</p>
+          </div>
+        </aside>
+
+        <main class="stage">
+          <div class="stage-head">
+            <div>
+              <p class="eyebrow">实时监看</p>
+              <h1 id="viewTitle">全部摄像头</h1>
+            </div>
+            <div class="stage-actions">
+              <button class="text-button" id="qualityAll" type="button">全部使用子码流</button>
+              <button class="icon-button" id="exitFocus" type="button" hidden aria-label="退出聚焦">×</button>
+            </div>
+          </div>
+          <section class="video-grid" id="videoGrid" aria-live="polite"></section>
+        </main>
+
+        <aside class="inspector">
+          <p class="eyebrow">当前通道</p>
+          <div class="channel-number"><span id="selectedBoard">下层板</span><strong id="selectedChannel">01</strong></div>
+          <div class="signal-line"><i id="selectedDot"></i><span id="selectedState">等待信号</span></div>
+
+          <dl class="facts">
+            <div><dt>设备节点</dt><dd id="selectedDevice">/dev/video1</dd></div>
+            <div><dt>显示码流</dt><dd id="selectedQuality">SUB</dd></div>
+            <div><dt>分辨率</dt><dd id="selectedResolution">640 × 360</dd></div>
+            <div><dt>帧率</dt><dd id="selectedFps">15 FPS</dd></div>
+          </dl>
+
+          <div class="quality-switch" role="group" aria-label="码流选择">
+            <button data-quality="main">主码流<small>720P · 25FPS</small></button>
+            <button class="is-active" data-quality="sub">子码流<small>360P · 15FPS</small></button>
+          </div>
+
+          <button class="focus-action" id="focusAction" type="button">
+            <span>聚焦查看</span><b>↗</b>
+          </button>
+          <p class="hint">双击任意画面也可以进入或退出聚焦模式。</p>
+        </aside>
+      </div>
+    </div>
+
+    <script src="/vendor/mediamtx-reader.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

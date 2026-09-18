@@ -1,0 +1,65 @@
+logLevel: info
+logDestinations: [stdout]
+readTimeout: 10s
+writeTimeout: 10s
+
+api: true
+apiAddress: 127.0.0.1:9997
+metrics: false
+pprof: false
+playback: false
+moq: false
+
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcEncryption: false
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ''
+webrtcIPsFromInterfaces: true
+webrtcAdditionalHosts: [127.0.0.1]
+
+pathDefaults:
+  sourceOnDemand: true
+  sourceOnDemandStartTimeout: 5s
+  sourceOnDemandCloseAfter: 2s
+  rtspTransport: tcp
+
+paths:
+  lower-ch1-main:
+    source: rtsp://192.168.100.125:8554/lower/ch1/main
+  lower-ch1-sub:
+    source: rtsp://192.168.100.125:8554/lower/ch1/sub
+  lower-ch2-main:
+    source: rtsp://192.168.100.125:8554/lower/ch2/main
+  lower-ch2-sub:
+    source: rtsp://192.168.100.125:8554/lower/ch2/sub
+  lower-ch3-main:
+    source: rtsp://192.168.100.125:8554/lower/ch3/main
+  lower-ch3-sub:
+    source: rtsp://192.168.100.125:8554/lower/ch3/sub
+  lower-ch4-main:
+    source: rtsp://192.168.100.125:8554/lower/ch4/main
+  lower-ch4-sub:
+    source: rtsp://192.168.100.125:8554/lower/ch4/sub
+  upper-ch1-main:
+    source: rtsp://192.168.100.125:8554/upper/ch1/main
+  upper-ch1-sub:
+    source: rtsp://192.168.100.125:8554/upper/ch1/sub
+  upper-ch2-main:
+    source: rtsp://192.168.100.125:8554/upper/ch2/main
+  upper-ch2-sub:
+    source: rtsp://192.168.100.125:8554/upper/ch2/sub
+  upper-ch3-main:
+    source: rtsp://192.168.100.125:8554/upper/ch3/main
+  upper-ch3-sub:
+    source: rtsp://192.168.100.125:8554/upper/ch3/sub
+  upper-ch4-main:
+    source: rtsp://192.168.100.125:8554/upper/ch4/main
+  upper-ch4-sub:
+    source: rtsp://192.168.100.125:8554/upper/ch4/sub

@@ -1,0 +1,8 @@
+/target/
+/runtime/
+/.playwright-cli/
+/output/
+/tools/
+/auto.crt
+/auto.key
+*.log
