@@ -25,6 +25,12 @@ const state = {
   settingsTrigger: null,
   settingsCloseTimer: null,
   settingsAutoCloseTimer: null,
+  recording: null,
+  recordingTrigger: null,
+  recordingCloseTimer: null,
+  recordingsTrigger: null,
+  recordings: null,
+  recordingsOffset: 0,
 };
 
 const grid = document.querySelector("#videoGrid");
@@ -224,8 +230,7 @@ function updateQualityLabels() {
   });
 }
 
-function placeSettings(trigger) {
-  const form = document.querySelector("#settingsBody");
+function placeDialog(form, trigger) {
   form.style.removeProperty("left");
   form.style.removeProperty("top");
   form.style.removeProperty("bottom");
@@ -240,6 +245,10 @@ function placeSettings(trigger) {
     : Math.max(12, triggerRect.top - height - 8);
   form.style.left = `${left}px`;
   form.style.top = `${top}px`;
+}
+
+function placeSettings(trigger) {
+  placeDialog(document.querySelector("#settingsBody"), trigger);
 }
 
 function closeSettings({ restoreFocus = true } = {}) {
@@ -271,6 +280,7 @@ async function toggleSettings(quality, trigger) {
     closeSettings();
     return;
   }
+  closeRecording({ restoreFocus: false });
   window.clearTimeout(state.settingsCloseTimer);
   window.clearTimeout(state.settingsAutoCloseTimer);
   state.editingProfile = quality;
@@ -402,6 +412,277 @@ async function saveSettings(event) {
   }
 }
 
+function recordingProfileText(data = state.recording) {
+  const source = data?.source || "main";
+  const profile = data?.profile || configFor(source);
+  return `${source === "main" ? "主码流" : "子码流"} · ${profile.width}×${profile.height} · ${profile.fps}FPS · ${profile.bitrate_kbps}Kbps`;
+}
+
+function updateRecordingUi(data) {
+  if (!data) return;
+  state.recording = data;
+  const row = document.querySelector("#recordingRow");
+  const dot = document.querySelector("#recordingDot");
+  const mounted = data.storage?.mounted === true;
+  const active = data.enabled && mounted;
+  row.classList.toggle("is-active", active);
+  dot.className = active ? "active" : (data.enabled && !mounted ? "error" : "");
+  document.querySelector("#recordingSummary").textContent = active
+    ? `${data.recording_cameras || 0} 路录像 · ${data.segment_seconds} 秒分片`
+    : (data.enabled ? "SD 卡不可用" : "已停止");
+  document.querySelector("#recordProfile").textContent = `${recordingProfileText(data)}；清晰度、帧率和码率可通过对应码流齿轮调整。`;
+  const storage = data.storage;
+  if (storage) {
+    document.querySelector("#storageFree").textContent = `${(storage.free_mb / 1024).toFixed(1)} GB 可用`;
+    document.querySelector("#storageTotal").textContent = `/ ${(storage.total_mb / 1024).toFixed(1)} GB`;
+    const bar = document.querySelector("#storageBar");
+    bar.style.width = `${Math.min(100, storage.used_percent)}%`;
+    bar.classList.toggle("warning", storage.used_percent >= data.max_usage_percent - 5);
+  }
+}
+
+function populateRecording(data) {
+  const form = document.querySelector("#recordingBody");
+  form.elements.enabled.checked = data.enabled;
+  form.elements.source.value = data.source;
+  form.elements.segmentSeconds.value = data.segment_seconds;
+  form.elements.reserveMb.value = data.reserve_mb;
+  form.elements.maxUsage.value = data.max_usage_percent;
+  updateRecordingUi(data);
+}
+
+function setRecordingStatus(message, kind = "idle") {
+  const status = document.querySelector("#recordingStatus");
+  status.textContent = message;
+  status.dataset.kind = kind;
+}
+
+function closeRecording({ restoreFocus = true } = {}) {
+  const form = document.querySelector("#recordingBody");
+  const backdrop = document.querySelector("#recordingBackdrop");
+  if (form.hidden) return;
+  window.clearTimeout(state.recordingCloseTimer);
+  form.classList.remove("is-open");
+  backdrop.classList.remove("is-open");
+  document.querySelector("#recordingRow").classList.remove("is-open");
+  document.querySelector("#recordingConfig").classList.remove("is-open");
+  document.querySelector("#recordingConfig").setAttribute("aria-expanded", "false");
+  const focusTarget = state.recordingTrigger;
+  state.recordingCloseTimer = window.setTimeout(() => {
+    form.hidden = true;
+    backdrop.hidden = true;
+    if (restoreFocus) focusTarget?.focus();
+    state.recordingTrigger = null;
+  }, 190);
+}
+
+async function loadRecording() {
+  const saveButton = document.querySelector("#saveRecording");
+  saveButton.disabled = true;
+  setRecordingStatus("正在读取 SD 卡状态…", "loading");
+  try {
+    const response = await fetch("/api/recording", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    populateRecording(data);
+    setRecordingStatus(data.storage?.mounted ? "SD 卡状态正常" : "未检测到 SD 卡", data.storage?.mounted ? "success" : "error");
+    saveButton.disabled = false;
+  } catch (error) {
+    setRecordingStatus(error.message || "录像状态读取失败", "error");
+  }
+}
+
+async function toggleRecording(trigger) {
+  const form = document.querySelector("#recordingBody");
+  const backdrop = document.querySelector("#recordingBackdrop");
+  if (!form.hidden) {
+    closeRecording();
+    return;
+  }
+  closeSettings({ restoreFocus: false });
+  window.clearTimeout(state.recordingCloseTimer);
+  state.recordingTrigger = trigger;
+  form.hidden = false;
+  backdrop.hidden = false;
+  trigger.classList.add("is-open");
+  trigger.setAttribute("aria-expanded", "true");
+  document.querySelector("#recordingRow").classList.add("is-open");
+  placeDialog(form, trigger);
+  window.requestAnimationFrame(() => {
+    form.classList.add("is-open");
+    backdrop.classList.add("is-open");
+  });
+  await loadRecording();
+  if (!form.hidden) {
+    placeDialog(form, trigger);
+    form.elements.enabled.focus();
+  }
+}
+
+function recordingPayload() {
+  const form = document.querySelector("#recordingBody");
+  return {
+    enabled: form.elements.enabled.checked,
+    source: form.elements.source.value,
+    segment_seconds: Number(form.elements.segmentSeconds.value),
+    reserve_mb: Number(form.elements.reserveMb.value),
+    max_usage_percent: Number(form.elements.maxUsage.value),
+  };
+}
+
+async function saveRecording(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const saveButton = document.querySelector("#saveRecording");
+  if (!form.reportValidity()) return;
+  saveButton.disabled = true;
+  setRecordingStatus("正在应用到 RV1126B…", "loading");
+  try {
+    const response = await fetch("/api/recording", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(recordingPayload()),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    populateRecording(data);
+    setRecordingStatus(data.enabled ? "录像已启动，等待关键帧写入" : "录像已停止，当前分片已安全封口", "success");
+  } catch (error) {
+    setRecordingStatus(error.message || "录像设置失败", "error");
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function refreshRecording() {
+  try {
+    const response = await fetch("/api/recording", { cache: "no-store" });
+    if (!response.ok) return;
+    updateRecordingUi(await response.json());
+  } catch (_error) {}
+}
+
+function formatRecordingSize(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatRecordingTime(epoch) {
+  return new Date(Number(epoch) * 1000).toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function closeRecordings({ restoreFocus = true } = {}) {
+  const form = document.querySelector("#recordingsBody");
+  const backdrop = document.querySelector("#recordingsBackdrop");
+  if (form.hidden) return;
+  form.classList.remove("is-open");
+  backdrop.classList.remove("is-open");
+  const focusTarget = state.recordingsTrigger;
+  window.setTimeout(() => {
+    form.hidden = true;
+    backdrop.hidden = true;
+    if (restoreFocus) focusTarget?.focus();
+    state.recordingsTrigger = null;
+  }, 190);
+}
+
+function renderRecordings(page, append = false) {
+  const list = document.querySelector("#recordingList");
+  if (!page.files?.length) {
+    if (!append) list.innerHTML = '<p class="recordings-empty">当前筛选没有已封存的录像</p>';
+    return;
+  }
+  const rows = page.files.map((file) => `
+    <article class="recording-file" data-url="${file.url}" data-camera="${file.camera}" data-name="${file.name}">
+      <div><b>${file.camera.replace("-", " · ").toUpperCase()}</b><span>${formatRecordingTime(file.modified_epoch)} · ${formatRecordingSize(file.size_bytes)}</span></div>
+      <div class="recording-file-actions">
+        <button type="button" data-recording-play>播放</button>
+        <a href="${file.url}" download="${file.name}">下载</a>
+        <button type="button" data-recording-delete>删除</button>
+      </div>
+    </article>`).join("");
+  if (append) list.insertAdjacentHTML("beforeend", rows);
+  else list.innerHTML = rows;
+}
+
+async function loadRecordings({ append = false } = {}) {
+  const status = document.querySelector("#recordingsStatus");
+  const list = document.querySelector("#recordingList");
+  const camera = document.querySelector("#recordingsCamera").value;
+  if (!append) state.recordingsOffset = 0;
+  status.textContent = "正在读取录像目录…";
+  status.dataset.kind = "loading";
+  try {
+    const response = await fetch(`/api/recordings?camera=${encodeURIComponent(camera)}&offset=${state.recordingsOffset}&limit=100`, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    state.recordings = data;
+    renderRecordings(data, append);
+    state.recordingsOffset += data.files.length;
+    const more = document.querySelector("#moreRecordings");
+    more.hidden = state.recordingsOffset >= data.total;
+    status.textContent = `已显示 ${state.recordingsOffset} / ${data.total} 个已封存文件`;
+    status.dataset.kind = "success";
+  } catch (error) {
+    list.innerHTML = "";
+    status.textContent = error.message || "录像目录读取失败";
+    status.dataset.kind = "error";
+  }
+}
+
+async function toggleRecordings(trigger) {
+  const form = document.querySelector("#recordingsBody");
+  const backdrop = document.querySelector("#recordingsBackdrop");
+  if (!form.hidden) {
+    closeRecordings();
+    return;
+  }
+  closeSettings({ restoreFocus: false });
+  closeRecording({ restoreFocus: false });
+  state.recordingsTrigger = trigger;
+  form.hidden = false;
+  backdrop.hidden = false;
+  placeDialog(form, trigger);
+  window.requestAnimationFrame(() => {
+    form.classList.add("is-open");
+    backdrop.classList.add("is-open");
+  });
+  await loadRecordings();
+  if (!form.hidden) placeDialog(form, trigger);
+}
+
+document.querySelector("#recordingManage").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleRecordings(event.currentTarget);
+});
+document.querySelector("#closeRecordings").addEventListener("click", closeRecordings);
+document.querySelector("#recordingsBackdrop").addEventListener("click", closeRecordings);
+document.querySelector("#refreshRecordings").addEventListener("click", loadRecordings);
+document.querySelector("#recordingsCamera").addEventListener("change", loadRecordings);
+document.querySelector("#moreRecordings").addEventListener("click", () => loadRecordings({ append: true }));
+document.querySelector("#recordingList").addEventListener("click", async (event) => {
+  const file = event.target.closest(".recording-file");
+  if (!file) return;
+  if (event.target.closest("[data-recording-play]")) {
+    const preview = document.querySelector("#recordingPreview");
+    preview.src = file.dataset.url;
+    preview.hidden = false;
+    preview.play().catch(() => {});
+  }
+  if (event.target.closest("[data-recording-delete]")) {
+    if (!window.confirm("确定删除这个录像文件吗？")) return;
+    const response = await fetch(`/api/recording/file?camera=${encodeURIComponent(file.dataset.camera)}&name=${encodeURIComponent(file.dataset.name)}`, { method: "DELETE" });
+    if (!response.ok) {
+      document.querySelector("#recordingsStatus").textContent = "删除失败，文件可能正在写入";
+      return;
+    }
+    await loadRecordings();
+  }
+});
+
 function updateOverview() {
   const onlineCameras = (board = null) => cameraDefs.filter((camera) => {
     if (board && camera.board !== board) return false;
@@ -515,13 +796,44 @@ document.querySelector("#settingsBody").addEventListener("keydown", (event) => {
     first.focus();
   }
 });
+document.querySelector("#recordingConfig").addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleRecording(event.currentTarget);
+});
+document.querySelector("#closeRecording").addEventListener("click", closeRecording);
+document.querySelector("#recordingBackdrop").addEventListener("click", closeRecording);
+document.querySelector("#recordingBody").addEventListener("submit", saveRecording);
+document.querySelector("#recordingBody").elements.source.addEventListener("change", (event) => {
+  const profile = configFor(event.currentTarget.value);
+  document.querySelector("#recordProfile").textContent = `${event.currentTarget.value === "main" ? "主码流" : "子码流"} · ${profile.width}×${profile.height} · ${profile.fps}FPS · ${profile.bitrate_kbps}Kbps；可通过码流齿轮调整。`;
+});
+document.querySelector("#recordingBody").addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const controls = [...event.currentTarget.querySelectorAll("button:not(:disabled), select:not(:disabled), input:not(:disabled)")]
+    .filter((element) => element.offsetParent !== null);
+  if (!controls.length) return;
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!document.querySelector("#settingsBody").hidden) closeSettings();
+  else if (!document.querySelector("#recordingBody").hidden) closeRecording();
+  else if (!document.querySelector("#recordingsBody").hidden) closeRecordings();
   else if (state.focused) toggleFocus();
 });
 window.addEventListener("resize", () => {
   if (state.settingsTrigger && !document.querySelector("#settingsBody").hidden) placeSettings(state.settingsTrigger);
+  if (state.recordingTrigger && !document.querySelector("#recordingBody").hidden) placeDialog(document.querySelector("#recordingBody"), state.recordingTrigger);
+  if (state.recordingsTrigger && !document.querySelector("#recordingsBody").hidden) placeDialog(document.querySelector("#recordingsBody"), state.recordingsTrigger);
 });
 window.addEventListener("beforeunload", () => cameraDefs.forEach((camera) => stopPlayer(camera.id)));
 
@@ -532,4 +844,6 @@ updateQualityAllAction();
 updateClock();
 setInterval(updateClock, 1000);
 refresh();
+refreshRecording();
+setInterval(refreshRecording, 2000);
 window.addEventListener("load", () => setTimeout(() => document.querySelector("#boot").classList.add("is-hidden"), 500));

@@ -75,6 +75,12 @@
             </div>
           </div>
 
+          <div class="recording-row" id="recordingRow">
+            <span class="recording-state"><i id="recordingDot"></i><b>SD 卡录像</b><small id="recordingSummary">正在读取…</small></span>
+            <button class="recording-manage" id="recordingManage" type="button">管理</button>
+            <button class="recording-config" id="recordingConfig" type="button" aria-label="设置 SD 卡录像" aria-controls="recordingBody" aria-expanded="false">⚙</button>
+          </div>
+
           <div class="settings-backdrop" id="settingsBackdrop" hidden></div>
           <form class="quality-editor" id="settingsBody" role="dialog" aria-modal="true" aria-labelledby="editorTitle" hidden>
             <div class="editor-head">
@@ -120,6 +126,75 @@
               <button id="saveSettings" type="submit">应用设置</button>
             </div>
           </form>
+
+          <div class="settings-backdrop" id="recordingBackdrop" hidden></div>
+          <form class="quality-editor recording-editor" id="recordingBody" role="dialog" aria-modal="true" aria-labelledby="recordingTitle" hidden>
+            <div class="editor-head">
+              <span><b id="recordingTitle">SD 卡录像设置</b><small>只录制已插入的摄像头</small></span>
+              <button id="closeRecording" type="button" aria-label="关闭录像设置">×</button>
+            </div>
+            <label class="recording-toggle">
+              <span><b>持续录像</b><small>每个摄像头独立存储</small></span>
+              <input name="enabled" type="checkbox"><i></i>
+            </label>
+            <div class="settings-row recording-grid">
+              <label>录像码流
+                <select name="source">
+                  <option value="main">主码流</option>
+                  <option value="sub">子码流</option>
+                </select>
+              </label>
+              <label>分片时长
+                <span class="input-unit"><input name="segmentSeconds" type="number" min="10" max="3600" step="1" value="30" required><em>秒</em></span>
+              </label>
+            </div>
+            <div class="record-profile" id="recordProfile">录像参数随所选码流设置</div>
+            <div class="settings-row recording-grid">
+              <label>保留空间
+                <span class="input-unit"><input name="reserveMb" type="number" min="256" max="16384" step="256" value="2048" required><em>MB</em></span>
+              </label>
+              <label>最大使用率
+                <span class="input-unit"><input name="maxUsage" type="number" min="50" max="98" step="1" value="85" required><em>%</em></span>
+              </label>
+            </div>
+            <div class="storage-meter" aria-label="SD 卡空间">
+              <span><b id="storageFree">--</b><small id="storageTotal">/ --</small></span>
+              <i><em id="storageBar"></em></i>
+            </div>
+            <p class="record-path">分别存入 <code>/recordings/各摄像头</code><br>总索引位于 <code>/recordings/all</code></p>
+            <div class="settings-submit">
+              <p id="recordingStatus" role="status">正在读取 SD 卡状态…</p>
+              <button id="saveRecording" type="submit">应用录像设置</button>
+            </div>
+          </form>
+
+          <div class="settings-backdrop" id="recordingsBackdrop" hidden></div>
+          <section class="quality-editor recordings-editor" id="recordingsBody" role="dialog" aria-modal="true" aria-labelledby="recordingsTitle" hidden>
+            <div class="editor-head">
+              <span><b id="recordingsTitle">SD 卡录像管理</b><small>直接查看板端已封存的 MP4</small></span>
+              <button id="closeRecordings" type="button" aria-label="关闭录像管理">×</button>
+            </div>
+            <div class="recordings-toolbar">
+              <label>摄像头
+                <select id="recordingsCamera">
+                  <option value="all">全部摄像头</option>
+                  <option value="lower-ch1">下层板 · CH1</option>
+                  <option value="lower-ch2">下层板 · CH2</option>
+                  <option value="lower-ch3">下层板 · CH3</option>
+                  <option value="lower-ch4">下层板 · CH4</option>
+                  <option value="upper-ch1">上层板 · CH1</option>
+                  <option value="upper-ch2">上层板 · CH2</option>
+                  <option value="upper-ch3">上层板 · CH3</option>
+                  <option value="upper-ch4">上层板 · CH4</option>
+                </select>
+              </label>
+              <button class="records-refresh" id="refreshRecordings" type="button">刷新</button>
+            </div>
+            <video class="recording-preview" id="recordingPreview" controls playsinline hidden></video>
+            <div class="recording-list" id="recordingList" aria-live="polite"></div>
+            <button class="records-more" id="moreRecordings" type="button" hidden>加载更早录像</button>
+            <p class="recordings-status" id="recordingsStatus" role="status">正在读取录像目录…</p>
+          </section>
 
           <button class="focus-action" id="focusAction" type="button">
             <span>聚焦查看</span><b>↗</b>

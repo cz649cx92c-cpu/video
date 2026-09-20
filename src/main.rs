@@ -1,9 +1,9 @@
 use axum::{
     Router,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderValue, StatusCode, header::CACHE_CONTROL},
     response::{IntoResponse, Json, Response},
-    routing::get,
+    routing::{delete, get},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -138,6 +138,80 @@ struct StreamConfig {
     rebuilding: Option<bool>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordingConfig {
+    enabled: bool,
+    source: String,
+    segment_seconds: u32,
+    reserve_mb: u32,
+    max_usage_percent: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_epoch_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile: Option<QualityConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    storage: Option<RecordingStorage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recording_cameras: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cameras: Option<Vec<RecordingCamera>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordingStorage {
+    mounted: bool,
+    root: String,
+    total_mb: u64,
+    free_mb: u64,
+    used_percent: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordingCamera {
+    board: String,
+    channel: u8,
+    present: bool,
+    recording: bool,
+    segments: u64,
+    dropped: u64,
+    error: String,
+    folder: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordingFile {
+    camera: String,
+    name: String,
+    size_bytes: u64,
+    modified_epoch: u64,
+    #[serde(default)]
+    url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordingFilePage {
+    camera: String,
+    offset: u32,
+    limit: u32,
+    total: u32,
+    files: Vec<RecordingFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecordingQuery {
+    camera: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecordingDeleteQuery {
+    camera: String,
+    name: String,
+}
+
 impl Default for StreamConfig {
     fn default() -> Self {
         Self {
@@ -233,6 +307,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/api/streams", get(api_streams))
         .route("/api/config", get(api_config_get).post(api_config_post))
+        .route(
+            "/api/recording",
+            get(api_recording_get).post(api_recording_post),
+        )
+        .route("/api/recordings", get(api_recordings_get))
+        .route("/api/recording/file", delete(api_recording_delete))
         .fallback_service(ServeDir::new(&web_root).append_index_html_on_directories(true))
         .layer(cache_layer)
         .layer(TraceLayer::new_for_http())
@@ -369,6 +449,159 @@ async fn api_config_post(
     }
 }
 
+async fn api_recording_get(State(state): State<AppState>) -> Response {
+    match fetch_board_json::<RecordingConfig>(
+        &state.board_host,
+        state.status_port,
+        "GET",
+        "/record.json",
+        None,
+    )
+    .await
+    {
+        Ok(config) => Json(config).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("无法读取板端录像状态: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_recording_post(
+    State(state): State<AppState>,
+    Json(mut config): Json<RecordingConfig>,
+) -> Response {
+    if let Err(error) = validate_recording_config(&config) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(ApiError { error })).into_response();
+    }
+    config.client_epoch_seconds = Some(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    );
+    config.generation = None;
+    config.profile = None;
+    config.storage = None;
+    config.recording_cameras = None;
+    config.cameras = None;
+    let body = match serde_json::to_vec(&config) {
+        Ok(body) => body,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    match fetch_board_json::<RecordingConfig>(
+        &state.board_host,
+        state.status_port,
+        "POST",
+        "/record.json",
+        Some(&body),
+    )
+    .await
+    {
+        Ok(applied) => Json(applied).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("板端应用录像设置失败: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_recordings_get(
+    State(state): State<AppState>,
+    Query(query): Query<RecordingQuery>,
+) -> Response {
+    let camera = query.camera.unwrap_or_else(|| "all".into());
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    if !valid_camera_id(&camera) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "无效的摄像头目录".into(),
+            }),
+        )
+            .into_response();
+    }
+    let path = format!("/recordings.json?camera={camera}&offset={offset}&limit={limit}");
+    match fetch_board_json::<RecordingFilePage>(
+        &state.board_host,
+        state.status_port,
+        "GET",
+        &path,
+        None,
+    )
+    .await
+    {
+        Ok(mut page) => {
+            for file in &mut page.files {
+                file.url = format!(
+                    "http://{}:{}/recording.mp4?camera={}&name={}",
+                    state.board_host, state.status_port, file.camera, file.name
+                );
+            }
+            Json(page).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("无法读取 SD 卡录像目录: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_recording_delete(
+    State(state): State<AppState>,
+    Query(query): Query<RecordingDeleteQuery>,
+) -> Response {
+    if !valid_camera_id(&query.camera) || !valid_recording_name(&query.name) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "无效的摄像头目录或录像文件名".into(),
+            }),
+        )
+            .into_response();
+    }
+    let path = format!(
+        "/recording.json?camera={}&name={}",
+        query.camera, query.name
+    );
+    match fetch_board_json::<serde_json::Value>(
+        &state.board_host,
+        state.status_port,
+        "DELETE",
+        &path,
+        None,
+    )
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("删除录像失败: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
 async fn board_state_monitor(
     board_host: String,
     status_port: u16,
@@ -494,6 +727,39 @@ fn validate_stream_config(config: StreamConfig) -> Result<(), String> {
         return Err("子码流分辨率不能高于主码流".into());
     }
     Ok(())
+}
+
+fn validate_recording_config(config: &RecordingConfig) -> Result<(), String> {
+    if config.source != "main" && config.source != "sub" {
+        return Err("录像码流必须选择主码流或子码流".into());
+    }
+    if !(10..=3600).contains(&config.segment_seconds) {
+        return Err("录像分片时长必须是 10–3600 秒".into());
+    }
+    if !(256..=16384).contains(&config.reserve_mb) {
+        return Err("SD 卡保留空间必须是 256–16384 MB".into());
+    }
+    if !(50..=98).contains(&config.max_usage_percent) {
+        return Err("SD 卡最大使用率必须是 50%–98%".into());
+    }
+    Ok(())
+}
+
+fn valid_camera_id(camera: &str) -> bool {
+    camera == "all"
+        || CAMERAS
+            .iter()
+            .any(|item| format!("{}-ch{}", item.board, item.channel) == camera)
+}
+
+fn valid_recording_name(name: &str) -> bool {
+    name.len() >= 5
+        && name.len() <= 255
+        && name.ends_with(".mp4")
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
 }
 
 fn env_u16(name: &str, fallback: u16) -> u16 {
