@@ -10,6 +10,7 @@ RV1126B 多摄像头 WebRTC 本地监看台。接收板端 8 个摄像头位置�
 - 摄像头拔掉后显示离线，重新插入后自动恢复，不需要刷新网页。
 - 通过板端只读状态接口 `http://192.168.100.125:8555/state.json` 获取真实热插拔状态，只连接实际存在的摄像头。
 - 视频墙默认使用子码流；聚焦时保持用户当前选择，不会自动切换主码流。
+- 右侧主、子码流卡片的齿轮分别打开对应设置，并从板端读取后统一调整 8 路摄像头的分辨率、帧率和码率。
 - RV1126B 使用硬件 H.264 编码，浏览器 WebRTC 使用平台硬件解码优先；右侧显示实际统计或硬件能力检测结果。
 
 ## 启动
@@ -26,7 +27,7 @@ http://127.0.0.1:9076
 rustup toolchain install stable-x86_64-pc-windows-gnullvm
 ```
 
-停止服务：
+停止服务：双击 `stop-video-wall.cmd`，或在 PowerShell 中运行：
 
 ```powershell
 .\stop.ps1
@@ -38,6 +39,7 @@ rustup toolchain install stable-x86_64-pc-windows-gnullvm
 |---|---|---|
 | `RV1126B_HOST` | `192.168.100.125` | 板子 IP |
 | `RV1126B_RTSP_PORT` | `8554` | RTSP 端口 |
+| `RV1126B_STATUS_PORT` | `8555` | 板端状态与编码配置端口 |
 | `VIDEO_WALL_PORT` | `9076` | 本机网页端口 |
 | `VIDEO_WALL_WEBRTC_PORT` | `8889` | 本机 WebRTC/WHEP 端口 |
 | `VIDEO_WALL_BIND` | `127.0.0.1` | 网页监听地址 |
@@ -56,3 +58,16 @@ rustup toolchain install stable-x86_64-pc-windows-gnullvm
 rtsp://192.168.100.125:8554/lower/ch1/main
 rtsp://192.168.100.125:8554/lower/ch1/sub
 ```
+
+## 编码配置接口
+
+电脑端公开 `GET/POST /api/config`，并代理板端 `8555` 端口的 `GET/POST /config.json`。请求与响应格式一致：
+
+```json
+{
+  "main": { "width": 1280, "height": 720, "fps": 25, "bitrate_kbps": 3072 },
+  "sub": { "width": 640, "height": 360, "fps": 15, "bitrate_kbps": 512 }
+}
+```
+
+配置是 8 路摄像头共用的主、子码流模板。板端不可达或拒绝配置时，网页会显示原始错误，不会将本地默认值显示为已生效。

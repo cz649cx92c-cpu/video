@@ -35,11 +35,6 @@
           </nav>
 
           <div class="rail-spacer"></div>
-          <div class="legend">
-            <p><i class="dot online"></i>在线</p>
-            <p><i class="dot waiting"></i>等待信号</p>
-            <p><i class="dot offline"></i>离线</p>
-          </div>
         </aside>
 
         <main class="stage">
@@ -49,7 +44,7 @@
               <h1 id="viewTitle">全部摄像头</h1>
             </div>
             <div class="stage-actions">
-              <button class="text-button" id="qualityAll" type="button">全部使用子码流</button>
+              <button class="text-button" id="qualityAll" type="button" data-target="main">切换成主码流</button>
               <button class="icon-button" id="exitFocus" type="button" hidden aria-label="退出聚焦">×</button>
             </div>
           </div>
@@ -66,17 +61,71 @@
             <div><dt>显示码流</dt><dd id="selectedQuality">SUB</dd></div>
             <div><dt>分辨率</dt><dd id="selectedResolution">640 × 360</dd></div>
             <div><dt>帧率</dt><dd id="selectedFps">15 FPS</dd></div>
+            <div><dt>码率</dt><dd id="selectedBitrate">512 Kbps</dd></div>
           </dl>
 
           <div class="quality-switch" role="group" aria-label="码流选择">
-            <button data-quality="main">主码流<small>720P · 25FPS</small></button>
-            <button class="is-active" data-quality="sub">子码流<small>360P · 15FPS</small></button>
+            <div class="quality-option" data-quality="main">
+              <button class="quality-select" type="button" data-quality="main">主码流<small>720P · 25FPS</small></button>
+              <button class="quality-config" type="button" data-quality="main" aria-label="设置主码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+            </div>
+            <div class="quality-option is-active" data-quality="sub">
+              <button class="quality-select" type="button" data-quality="sub">子码流<small>360P · 15FPS</small></button>
+              <button class="quality-config" type="button" data-quality="sub" aria-label="设置子码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+            </div>
           </div>
+
+          <div class="settings-backdrop" id="settingsBackdrop" hidden></div>
+          <form class="quality-editor" id="settingsBody" role="dialog" aria-modal="true" aria-labelledby="editorTitle" hidden>
+            <div class="editor-head">
+              <span><b id="editorTitle">主码流设置</b><small>8 路摄像头全局生效</small></span>
+              <button id="closeSettings" type="button" aria-label="关闭设置">×</button>
+            </div>
+            <fieldset data-profile="main">
+              <label>清晰度
+                <select name="mainResolution">
+                  <option value="1280x720">1280 × 720</option>
+                  <option value="960x540">960 × 540</option>
+                  <option value="640x360">640 × 360</option>
+                </select>
+              </label>
+              <div class="settings-row">
+                <label>帧率
+                  <span class="input-unit"><input name="mainFps" type="number" min="1" max="25" step="1" required><em>FPS</em></span>
+                </label>
+                <label>码率
+                  <span class="input-unit"><input name="mainBitrate" type="number" min="256" max="4096" step="128" required><em>Kbps</em></span>
+                </label>
+              </div>
+            </fieldset>
+            <fieldset data-profile="sub" hidden>
+              <label>清晰度
+                <select name="subResolution">
+                  <option value="640x360">640 × 360</option>
+                  <option value="480x270">480 × 270</option>
+                  <option value="320x180">320 × 180</option>
+                </select>
+              </label>
+              <div class="settings-row">
+                <label>帧率
+                  <span class="input-unit"><input name="subFps" type="number" min="1" max="25" step="1" required><em>FPS</em></span>
+                </label>
+                <label>码率
+                  <span class="input-unit"><input name="subBitrate" type="number" min="64" max="1024" step="64" required><em>Kbps</em></span>
+                </label>
+              </div>
+            </fieldset>
+            <div class="settings-submit">
+              <p id="settingsStatus" role="status">正在读取板端当前配置…</p>
+              <button id="saveSettings" type="submit">应用设置</button>
+            </div>
+          </form>
 
           <button class="focus-action" id="focusAction" type="button">
             <span>聚焦查看</span><b>↗</b>
           </button>
           <p class="hint">双击任意画面也可以进入或退出聚焦模式。</p>
+
         </aside>
       </div>
     </div>

@@ -19,6 +19,12 @@ const state = {
   decoder: new Map(),
   apiOnline: false,
   hardwareCapable: null,
+  config: null,
+  configLoaded: false,
+  editingProfile: null,
+  settingsTrigger: null,
+  settingsCloseTimer: null,
+  settingsAutoCloseTimer: null,
 };
 
 const grid = document.querySelector("#videoGrid");
@@ -67,6 +73,7 @@ function toggleFocus(cameraId = state.selected) {
   if (cameraId !== state.selected) selectCamera(cameraId);
   state.focused = !state.focused;
   grid.classList.toggle("is-focus", state.focused);
+  document.body.classList.toggle("focus-layout", state.focused);
   document.querySelector("#exitFocus").hidden = !state.focused;
   document.querySelector("#focusAction span").textContent = state.focused ? "返回视频墙" : "聚焦查看";
 }
@@ -76,6 +83,16 @@ function setQuality(cameraId, quality) {
   stopPlayer(cameraId);
   updateFeed(cameraId);
   updateInspector();
+  updateQualityAllAction();
+}
+
+function updateQualityAllAction() {
+  const allMain = cameraDefs.every((camera) => state.quality.get(camera.id) === "main");
+  const target = allMain ? "sub" : "main";
+  const button = document.querySelector("#qualityAll");
+  button.dataset.target = target;
+  button.textContent = target === "main" ? "切换成主码流" : "切换成子码流";
+  button.setAttribute("aria-label", `全部摄像头切换成${target === "main" ? "主码流" : "子码流"}`);
 }
 
 function updateFeed(cameraId) {
@@ -186,10 +203,203 @@ function updateInspector() {
   document.querySelector("#selectedQuality").textContent = requestedQuality.toUpperCase();
   document.querySelector("#selectedResolution").textContent = stream?.resolution || (requestedQuality === "main" ? "1280 × 720" : "640 × 360");
   document.querySelector("#selectedFps").textContent = decoder?.fps ? `${decoder.fps} FPS` : `${stream?.expected_fps || (requestedQuality === "main" ? 25 : 15)} FPS`;
+  document.querySelector("#selectedBitrate").textContent = `${stream?.bitrate_kbps || configFor(requestedQuality).bitrate_kbps} Kbps`;
   document.querySelector("#selectedState").textContent = statusText(stream?.state);
   const dot = document.querySelector("#selectedDot");
   dot.className = stream?.state === "online" ? "online" : (stream?.state === "offline" || stream?.state === "error" ? "offline" : "");
-  document.querySelectorAll(".quality-switch button").forEach((button) => button.classList.toggle("is-active", button.dataset.quality === requestedQuality));
+  document.querySelectorAll(".quality-option").forEach((option) => option.classList.toggle("is-active", option.dataset.quality === requestedQuality));
+  updateQualityLabels();
+}
+
+function configFor(quality) {
+  return state.config?.[quality] || (quality === "main"
+    ? { width: 1280, height: 720, fps: 25, bitrate_kbps: 3072 }
+    : { width: 640, height: 360, fps: 15, bitrate_kbps: 512 });
+}
+
+function updateQualityLabels() {
+  document.querySelectorAll(".quality-select").forEach((button) => {
+    const config = configFor(button.dataset.quality);
+    button.querySelector("small").textContent = `${config.width}×${config.height} · ${config.fps}FPS`;
+  });
+}
+
+function placeSettings(trigger) {
+  const form = document.querySelector("#settingsBody");
+  form.style.removeProperty("left");
+  form.style.removeProperty("top");
+  form.style.removeProperty("bottom");
+  if (window.innerWidth <= 680) return;
+  const triggerRect = trigger.getBoundingClientRect();
+  const width = form.offsetWidth;
+  const height = form.offsetHeight;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, triggerRect.right - width));
+  const below = triggerRect.bottom + 8;
+  const top = below + height <= window.innerHeight - 12
+    ? below
+    : Math.max(12, triggerRect.top - height - 8);
+  form.style.left = `${left}px`;
+  form.style.top = `${top}px`;
+}
+
+function closeSettings({ restoreFocus = true } = {}) {
+  const form = document.querySelector("#settingsBody");
+  const backdrop = document.querySelector("#settingsBackdrop");
+  if (form.hidden) return;
+  window.clearTimeout(state.settingsCloseTimer);
+  window.clearTimeout(state.settingsAutoCloseTimer);
+  form.classList.remove("is-open");
+  backdrop.classList.remove("is-open");
+  state.editingProfile = null;
+  document.querySelectorAll(".quality-config").forEach((button) => {
+    button.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  });
+  const focusTarget = state.settingsTrigger;
+  state.settingsCloseTimer = window.setTimeout(() => {
+    form.hidden = true;
+    backdrop.hidden = true;
+    if (restoreFocus) focusTarget?.focus();
+    state.settingsTrigger = null;
+  }, 190);
+}
+
+async function toggleSettings(quality, trigger) {
+  const form = document.querySelector("#settingsBody");
+  const backdrop = document.querySelector("#settingsBackdrop");
+  if (!form.hidden && state.editingProfile === quality) {
+    closeSettings();
+    return;
+  }
+  window.clearTimeout(state.settingsCloseTimer);
+  window.clearTimeout(state.settingsAutoCloseTimer);
+  state.editingProfile = quality;
+  state.settingsTrigger = trigger;
+  form.hidden = false;
+  backdrop.hidden = false;
+  document.querySelector("#editorTitle").textContent = `${quality === "main" ? "主码流" : "子码流"}设置`;
+  form.querySelectorAll("fieldset[data-profile]").forEach((fieldset) => {
+    fieldset.hidden = fieldset.dataset.profile !== quality;
+  });
+  document.querySelectorAll(".quality-config").forEach((button) => {
+    const active = button.dataset.quality === quality;
+    button.classList.toggle("is-open", active);
+    button.setAttribute("aria-expanded", String(active));
+  });
+  placeSettings(trigger);
+  window.requestAnimationFrame(() => {
+    form.classList.add("is-open");
+    backdrop.classList.add("is-open");
+  });
+  await loadSettings();
+  if (state.editingProfile === quality) {
+    placeSettings(trigger);
+    form.querySelector(`fieldset[data-profile="${quality}"] select`)?.focus();
+  }
+}
+
+function setSettingsStatus(message, kind = "idle") {
+  const status = document.querySelector("#settingsStatus");
+  status.textContent = message;
+  status.dataset.kind = kind;
+}
+
+function populateSettings(config) {
+  const form = document.querySelector("#settingsBody");
+  for (const quality of ["main", "sub"]) {
+    const value = config[quality];
+    const resolution = form.elements[`${quality}Resolution`];
+    const resolutionValue = `${value.width}x${value.height}`;
+    if (![...resolution.options].some((option) => option.value === resolutionValue)) {
+      resolution.add(new Option(`${value.width} × ${value.height}`, resolutionValue));
+    }
+    resolution.value = resolutionValue;
+    form.elements[`${quality}Fps`].value = value.fps;
+    form.elements[`${quality}Bitrate`].value = value.bitrate_kbps;
+  }
+}
+
+async function loadSettings() {
+  const saveButton = document.querySelector("#saveSettings");
+  saveButton.disabled = true;
+  setSettingsStatus("正在读取板端配置…", "loading");
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    state.config = data;
+    state.configLoaded = data.rebuilding !== true;
+    populateSettings(data);
+    updateQualityLabels();
+    updateInspector();
+    setSettingsStatus(data.rebuilding ? "板端正在应用上一组配置…" : "已读取当前配置", data.rebuilding ? "loading" : "success");
+  } catch (error) {
+    state.configLoaded = false;
+    setSettingsStatus(error.message || "板端配置读取失败", "error");
+  } finally {
+    saveButton.disabled = !state.configLoaded;
+  }
+}
+
+async function waitForConfigApplied(initial) {
+  let latest = initial;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const generationApplied = latest.generation == null
+      || (latest.applied_generation != null && latest.applied_generation >= latest.generation);
+    if (latest.rebuilding !== true && generationApplied) return latest;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    const response = await fetch("/api/config", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    latest = data;
+  }
+  throw new Error("板端重建码流超时，请检查板端日志");
+}
+
+function settingsPayload() {
+  const form = document.querySelector("#settingsBody");
+  const profile = (quality) => {
+    const [width, height] = form.elements[`${quality}Resolution`].value.split("x").map(Number);
+    return {
+      width,
+      height,
+      fps: Number(form.elements[`${quality}Fps`].value),
+      bitrate_kbps: Number(form.elements[`${quality}Bitrate`].value),
+    };
+  };
+  return { main: profile("main"), sub: profile("sub") };
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const saveButton = document.querySelector("#saveSettings");
+  if (!form.reportValidity()) return;
+  saveButton.disabled = true;
+  setSettingsStatus("正在应用到 8 路码流…", "loading");
+  try {
+    const response = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settingsPayload()),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    setSettingsStatus(data.rebuilding ? "板端正在重建编码通道…" : "配置已提交，正在确认…", "loading");
+    const applied = await waitForConfigApplied(data);
+    state.config = applied;
+    state.configLoaded = true;
+    populateSettings(applied);
+    updateQualityLabels();
+    updateInspector();
+    setSettingsStatus("设置已生效，视频正在重新连接", "success");
+    window.setTimeout(refresh, 300);
+    state.settingsAutoCloseTimer = window.setTimeout(() => closeSettings(), 750);
+  } catch (error) {
+    setSettingsStatus(error.message || "设置应用失败", "error");
+  } finally {
+    saveButton.disabled = !state.configLoaded;
+  }
 }
 
 function updateOverview() {
@@ -210,6 +420,14 @@ async function refresh() {
     const data = await response.json();
     state.apiOnline = true;
     state.streams = new Map(data.streams.map((stream) => [stream.id, stream]));
+    const main = data.streams.find((stream) => stream.quality === "main");
+    const sub = data.streams.find((stream) => stream.quality === "sub");
+    if (main && sub) {
+      state.config = {
+        main: { width: Number(main.resolution.split("×")[0]), height: Number(main.resolution.split("×")[1]), fps: main.expected_fps, bitrate_kbps: main.bitrate_kbps },
+        sub: { width: Number(sub.resolution.split("×")[0]), height: Number(sub.resolution.split("×")[1]), fps: sub.expected_fps, bitrate_kbps: sub.bitrate_kbps },
+      };
+    }
     cameraDefs.forEach((camera) => updateFeed(camera.id));
     updateInspector();
     updateOverview();
@@ -261,16 +479,56 @@ document.querySelectorAll(".filter").forEach((button) => button.addEventListener
   cameraDefs.forEach((camera) => updateFeed(camera.id));
 }));
 
-document.querySelectorAll(".quality-switch button").forEach((button) => button.addEventListener("click", () => setQuality(state.selected, button.dataset.quality)));
+document.querySelectorAll(".quality-select").forEach((button) => button.addEventListener("click", () => setQuality(state.selected, button.dataset.quality)));
+document.querySelectorAll(".quality-config").forEach((button) => button.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  toggleSettings(button.dataset.quality, button);
+}));
 document.querySelector("#focusAction").addEventListener("click", () => toggleFocus());
 document.querySelector("#exitFocus").addEventListener("click", () => toggleFocus());
-document.querySelector("#qualityAll").addEventListener("click", () => cameraDefs.forEach((camera) => setQuality(camera.id, "sub")));
-document.addEventListener("keydown", (event) => { if (event.key === "Escape" && state.focused) toggleFocus(); });
+document.querySelector("#qualityAll").addEventListener("click", (event) => {
+  const quality = event.currentTarget.dataset.target === "sub" ? "sub" : "main";
+  cameraDefs.forEach((camera) => {
+    state.quality.set(camera.id, quality);
+    stopPlayer(camera.id);
+    updateFeed(camera.id);
+  });
+  updateInspector();
+  updateQualityAllAction();
+});
+document.querySelector("#closeSettings").addEventListener("click", closeSettings);
+document.querySelector("#settingsBackdrop").addEventListener("click", closeSettings);
+document.querySelector("#settingsBody").addEventListener("submit", saveSettings);
+document.querySelector("#settingsBody").addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const controls = [...event.currentTarget.querySelectorAll("button:not(:disabled), select:not(:disabled), input:not(:disabled)")]
+    .filter((element) => element.offsetParent !== null);
+  if (!controls.length) return;
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!document.querySelector("#settingsBody").hidden) closeSettings();
+  else if (state.focused) toggleFocus();
+});
+window.addEventListener("resize", () => {
+  if (state.settingsTrigger && !document.querySelector("#settingsBody").hidden) placeSettings(state.settingsTrigger);
+});
 window.addEventListener("beforeunload", () => cameraDefs.forEach((camera) => stopPlayer(camera.id)));
 
 renderFeeds();
 detectHardwareDecode();
 updateInspector();
+updateQualityAllAction();
 updateClock();
 setInterval(updateClock, 1000);
 refresh();

@@ -9,7 +9,7 @@ $connections = Get-NetTCPConnection -LocalPort 9076 -State Listen
 $processIds = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
 
 if ($processIds.Count -eq 0) {
-    Write-Host '页面服务当前没有运行。'
+    Write-Host 'RV / VISION is not running.'
 }
 
 foreach ($processId in $processIds) {
@@ -26,4 +26,4 @@ if (Test-Path -LiteralPath $mediaMtxPidFile) {
     Remove-Item -LiteralPath $mediaMtxPidFile -Force
 }
 
-Write-Host 'RV / VISION WebRTC 已停止。'
+Write-Host 'RV / VISION WebRTC stopped.'

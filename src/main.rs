@@ -1,8 +1,8 @@
 use axum::{
     Router,
     extract::State,
-    http::{HeaderValue, header::CACHE_CONTROL},
-    response::Json,
+    http::{HeaderValue, StatusCode, header::CACHE_CONTROL},
+    response::{IntoResponse, Json, Response},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
@@ -97,13 +97,17 @@ const CAMERAS: [CameraDef; 8] = [
 struct AppState {
     board_host: String,
     rtsp_port: u16,
+    status_port: u16,
     webrtc_port: u16,
     presence: Arc<RwLock<HashMap<String, bool>>>,
+    stream_config: Arc<RwLock<StreamConfig>>,
 }
 
 #[derive(Deserialize)]
 struct BoardStateFile {
     cameras: Vec<BoardCameraState>,
+    #[serde(default)]
+    config: Option<StreamConfig>,
 }
 
 #[derive(Deserialize)]
@@ -112,6 +116,53 @@ struct BoardCameraState {
     channel: u8,
     present: bool,
     running: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct QualityConfig {
+    width: u16,
+    height: u16,
+    fps: u8,
+    bitrate_kbps: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct StreamConfig {
+    main: QualityConfig,
+    sub: QualityConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    applied_generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rebuilding: Option<bool>,
+}
+
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            main: QualityConfig {
+                width: 1280,
+                height: 720,
+                fps: 25,
+                bitrate_kbps: 3072,
+            },
+            sub: QualityConfig {
+                width: 640,
+                height: 360,
+                fps: 15,
+                bitrate_kbps: 512,
+            },
+            generation: None,
+            applied_generation: None,
+            rebuilding: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ApiError {
+    error: String,
 }
 
 #[derive(Serialize)]
@@ -135,6 +186,7 @@ struct StreamSnapshot {
     quality: String,
     resolution: String,
     expected_fps: u8,
+    bitrate_kbps: u32,
     rtsp_url: String,
     webrtc_url: String,
     state: String,
@@ -155,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_host = env::var("VIDEO_WALL_BIND").unwrap_or_else(|_| "127.0.0.1".into());
 
     let presence = Arc::new(RwLock::new(HashMap::new()));
+    let stream_config = Arc::new(RwLock::new(StreamConfig::default()));
     for camera in CAMERAS {
         presence.write().await.insert(camera.id.into(), false);
     }
@@ -162,13 +215,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         board_host.clone(),
         status_port,
         presence.clone(),
+        stream_config.clone(),
     ));
 
     let state = AppState {
         board_host: board_host.clone(),
         rtsp_port,
+        status_port,
         webrtc_port,
         presence,
+        stream_config,
     };
     let cache_layer = SetResponseHeaderLayer::if_not_present(
         CACHE_CONTROL,
@@ -176,6 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let app = Router::new()
         .route("/api/streams", get(api_streams))
+        .route("/api/config", get(api_config_get).post(api_config_post))
         .fallback_service(ServeDir::new(&web_root).append_index_html_on_directories(true))
         .layer(cache_layer)
         .layer(TraceLayer::new_for_http())
@@ -197,11 +254,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn api_streams(State(state): State<AppState>) -> Json<ApiResponse> {
     let presence = state.presence.read().await;
+    let config = *state.stream_config.read().await;
     let mut streams = Vec::with_capacity(CAMERAS.len() * 2);
     for camera in CAMERAS {
         let present = presence.get(camera.id).copied().unwrap_or(false);
         for quality in ["main", "sub"] {
-            let (resolution, expected_fps) = quality_metadata(quality);
+            let quality_config = if quality == "main" {
+                config.main
+            } else {
+                config.sub
+            };
             let id = format!("{}-{quality}", camera.id);
             streams.push(StreamSnapshot {
                 id: id.clone(),
@@ -211,8 +273,9 @@ async fn api_streams(State(state): State<AppState>) -> Json<ApiResponse> {
                 channel: camera.channel,
                 device: camera.device.into(),
                 quality: quality.into(),
-                resolution: resolution.into(),
-                expected_fps,
+                resolution: format!("{} × {}", quality_config.width, quality_config.height),
+                expected_fps: quality_config.fps,
+                bitrate_kbps: quality_config.bitrate_kbps,
                 rtsp_url: format!(
                     "rtsp://{}:{}/{}/ch{}/{}",
                     state.board_host, state.rtsp_port, camera.board, camera.channel, quality
@@ -240,10 +303,77 @@ async fn api_streams(State(state): State<AppState>) -> Json<ApiResponse> {
     })
 }
 
+async fn api_config_get(State(state): State<AppState>) -> Response {
+    match fetch_board_json::<StreamConfig>(
+        &state.board_host,
+        state.status_port,
+        "GET",
+        "/config.json",
+        None,
+    )
+    .await
+    {
+        Ok(config) => {
+            *state.stream_config.write().await = config;
+            Json(config).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("无法读取板端编码配置: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_config_post(
+    State(state): State<AppState>,
+    Json(config): Json<StreamConfig>,
+) -> Response {
+    if let Err(error) = validate_stream_config(config) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(ApiError { error })).into_response();
+    }
+    let body = match serde_json::to_vec(&config) {
+        Ok(body) => body,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    match fetch_board_json::<StreamConfig>(
+        &state.board_host,
+        state.status_port,
+        "POST",
+        "/config.json",
+        Some(&body),
+    )
+    .await
+    {
+        Ok(applied) => {
+            *state.stream_config.write().await = applied;
+            Json(applied).into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("板端应用编码配置失败: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
 async fn board_state_monitor(
     board_host: String,
     status_port: u16,
     presence: Arc<RwLock<HashMap<String, bool>>>,
+    stream_config: Arc<RwLock<StreamConfig>>,
 ) {
     loop {
         match fetch_board_state(&board_host, status_port).await {
@@ -261,6 +391,10 @@ async fn board_state_monitor(
                         camera.id.into(),
                         next.get(camera.id).copied().unwrap_or(false),
                     );
+                }
+                drop(current);
+                if let Some(config) = board_state.config {
+                    *stream_config.write().await = config;
                 }
             }
             Err(error) => eprintln!("板端状态同步失败: {error}"),
@@ -292,12 +426,74 @@ async fn fetch_board_state(
     Ok(timeout(Duration::from_secs(2), request).await??)
 }
 
-fn quality_metadata(quality: &str) -> (&'static str, u8) {
-    if quality == "main" {
-        ("1280 × 720", 25)
-    } else {
-        ("640 × 360", 15)
+async fn fetch_board_json<T: serde::de::DeserializeOwned>(
+    board_host: &str,
+    status_port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+    let request = async {
+        let mut stream = tokio::net::TcpStream::connect((board_host, status_port)).await?;
+        let body = body.unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {board_host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await?;
+        if !body.is_empty() {
+            stream.write_all(body).await?;
+        }
+        let mut response = Vec::with_capacity(4096);
+        stream.read_to_end(&mut response).await?;
+        let header_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|index| index + 4)
+            .ok_or("板端配置服务返回了无效 HTTP 响应")?;
+        let header = std::str::from_utf8(&response[..header_end])?;
+        let status = header
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u16>().ok())
+            .ok_or("板端配置服务缺少 HTTP 状态码")?;
+        if !(200..300).contains(&status) {
+            let message = String::from_utf8_lossy(&response[header_end..]);
+            return Err(format!("HTTP {status}: {message}").into());
+        }
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(serde_json::from_slice(
+            &response[header_end..],
+        )?)
+    };
+    Ok(timeout(Duration::from_secs(4), request).await??)
+}
+
+fn validate_stream_config(config: StreamConfig) -> Result<(), String> {
+    for (name, value, min_bitrate, max_bitrate) in [
+        ("主码流", config.main, 256, 4096),
+        ("子码流", config.sub, 64, 1024),
+    ] {
+        if value.width < 320 || value.width > 1280 || value.width % 2 != 0 {
+            return Err(format!("{name}宽度必须是 320–1280 之间的偶数"));
+        }
+        if value.height < 180 || value.height > 720 || value.height % 2 != 0 {
+            return Err(format!("{name}高度必须是 180–720 之间的偶数"));
+        }
+        if u32::from(value.width) * 9 != u32::from(value.height) * 16 {
+            return Err(format!("{name}分辨率必须是 16:9"));
+        }
+        if !(1..=25).contains(&value.fps) {
+            return Err(format!("{name}帧率必须是 1–25 FPS"));
+        }
+        if !(min_bitrate..=max_bitrate).contains(&value.bitrate_kbps) {
+            return Err(format!("{name}码率必须是 {min_bitrate}–{max_bitrate} Kbps"));
+        }
     }
+    if config.sub.width > config.main.width || config.sub.height > config.main.height {
+        return Err("子码流分辨率不能高于主码流".into());
+    }
+    Ok(())
 }
 
 fn env_u16(name: &str, fallback: u16) -> u16 {

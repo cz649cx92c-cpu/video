@@ -15,7 +15,7 @@ Set-Location -LiteralPath $projectRoot
 $listener = Get-NetTCPConnection -LocalPort 9076 -State Listen -ErrorAction SilentlyContinue
 if ($listener) {
     Start-Process $url
-    Write-Host "RV / VISION 已在运行，已打开：$url" -ForegroundColor Green
+    Write-Host "RV / VISION is already running: $url" -ForegroundColor Green
     exit 0
 }
 
@@ -27,12 +27,12 @@ if (-not (Test-Path -LiteralPath $mediaMtx)) {
     $toolsDir = Join-Path $projectRoot 'tools'
     $archivePath = Join-Path $toolsDir $mediaMtxArchive
     New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
-    Write-Host "首次运行，正在下载 MediaMTX $mediaMtxVersion..." -ForegroundColor Cyan
+    Write-Host "Downloading MediaMTX $mediaMtxVersion..." -ForegroundColor Cyan
     Invoke-WebRequest -Uri $mediaMtxUrl -OutFile $archivePath
     $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $mediaMtxSha256) {
         Remove-Item -LiteralPath $archivePath -Force
-        throw "MediaMTX SHA-256 校验失败，已删除下载文件。"
+        throw "MediaMTX SHA-256 verification failed. The download was removed."
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $mediaMtx) -Force | Out-Null
     Expand-Archive -LiteralPath $archivePath -DestinationPath (Split-Path -Parent $mediaMtx) -Force
@@ -47,9 +47,9 @@ if (-not $needsBuild) {
 }
 
 if ($needsBuild) {
-    Write-Host '首次运行，正在编译 Rust 接收端...' -ForegroundColor Cyan
+    Write-Host 'Building the Rust receiver...' -ForegroundColor Cyan
     if (-not (Test-Path -LiteralPath (Join-Path $gnuBin 'cargo.exe'))) {
-        throw '未找到 Rust GNU/LLVM 工具链，请先安装 stable-x86_64-pc-windows-gnullvm。'
+        throw 'Rust GNU/LLVM toolchain not found. Install stable-x86_64-pc-windows-gnullvm first.'
     }
     $env:PATH = "$gnuBin;$gnuRustLib;$env:PATH"
     $env:RUSTC = Join-Path $gnuBin 'rustc.exe'
@@ -74,12 +74,12 @@ if (-not $mediaMtxListener) {
     Set-Content -LiteralPath $mediaMtxPidFile -Value $mediaMtxProcess.Id
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         if (Get-NetTCPConnection -LocalPort 8889 -State Listen -ErrorAction SilentlyContinue) { break }
-        if ($mediaMtxProcess.HasExited) { throw "MediaMTX 启动失败，请检查：$mediaMtxErr" }
+        if ($mediaMtxProcess.HasExited) { throw "MediaMTX failed to start. Check: $mediaMtxErr" }
         Start-Sleep -Milliseconds 200
     }
 }
 
-Write-Host '正在启动 RV / VISION WebRTC...' -ForegroundColor Green
+Write-Host 'Starting RV / VISION WebRTC...' -ForegroundColor Green
 $process = Start-Process -FilePath $binary -WorkingDirectory $projectRoot -PassThru -WindowStyle Hidden
 
 for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -92,5 +92,5 @@ for ($attempt = 0; $attempt -lt 30; $attempt++) {
 }
 
 Start-Process $url
-Write-Host "WebRTC 监看台已打开：$url" -ForegroundColor Green
-Write-Host "后台进程 PID：$($process.Id)"
+Write-Host "RV / VISION opened: $url" -ForegroundColor Green
+Write-Host "Background process PID: $($process.Id)"
