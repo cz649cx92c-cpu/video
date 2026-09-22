@@ -194,6 +194,7 @@ button { color: inherit; }
 .recording-toggle input:checked + i::after { transform: translateX(15px); }
 .recording-toggle input:focus-visible + i { box-shadow: 0 0 0 3px var(--accent-soft); }
 .recording-grid { grid-template-columns: 1fr 1fr; }
+.recording-grid-single { grid-template-columns: 1fr; }
 .record-profile { padding: 9px 10px; border-left: 2px solid var(--accent); background: rgba(46,139,87,.06); color: #557262; font-size: 8px; line-height: 1.6; }
 .storage-meter { display: grid; gap: 7px; padding-top: 3px; }
 .storage-meter > span { display: flex; align-items: baseline; gap: 5px; }

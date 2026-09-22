@@ -149,10 +149,8 @@
               </label>
             </div>
             <div class="record-profile" id="recordProfile">录像参数随所选码流设置</div>
-            <div class="settings-row recording-grid">
-              <label>保留空间
-                <span class="input-unit"><input name="reserveMb" type="number" min="256" max="16384" step="256" value="2048" required><em>MB</em></span>
-              </label>
+            <input name="reserveMb" type="hidden" value="2048">
+            <div class="settings-row recording-grid recording-grid-single">
               <label>最大使用率
                 <span class="input-unit"><input name="maxUsage" type="number" min="50" max="98" step="1" value="85" required><em>%</em></span>
               </label>
