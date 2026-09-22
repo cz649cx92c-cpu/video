@@ -573,6 +573,12 @@ function formatRecordingTime(epoch) {
   });
 }
 
+function recordingFileUrl(file = {}) {
+  if (file.url) return file.url;
+  if (!file.camera || !file.name) return "";
+  return `/api/recording/file?camera=${encodeURIComponent(file.camera)}&name=${encodeURIComponent(file.name)}`;
+}
+
 function closeRecordings({ restoreFocus = true } = {}) {
   const form = document.querySelector("#recordingsBody");
   const backdrop = document.querySelector("#recordingsBackdrop");
@@ -594,15 +600,18 @@ function renderRecordings(page, append = false) {
     if (!append) list.innerHTML = '<p class="recordings-empty">当前筛选没有已封存的录像</p>';
     return;
   }
-  const rows = page.files.map((file) => `
-    <article class="recording-file" data-url="${file.url}" data-camera="${file.camera}" data-name="${file.name}">
+  const rows = page.files.map((file) => {
+    const url = recordingFileUrl(file);
+    return `
+    <article class="recording-file" data-url="${url}" data-camera="${file.camera}" data-name="${file.name}">
       <div><b>${file.camera.replace("-", " · ").toUpperCase()}</b><span>${formatRecordingTime(file.modified_epoch)} · ${formatRecordingSize(file.size_bytes)}</span></div>
       <div class="recording-file-actions">
         <button type="button" data-recording-play>播放</button>
-        <a href="${file.url}" download="${file.name}">下载</a>
+        <a href="${url}" download="${file.name}">下载</a>
         <button type="button" data-recording-delete>删除</button>
       </div>
-    </article>`).join("");
+    </article>`;
+  }).join("");
   if (append) list.insertAdjacentHTML("beforeend", rows);
   else list.innerHTML = rows;
 }
@@ -668,7 +677,9 @@ document.querySelector("#recordingList").addEventListener("click", async (event)
   if (!file) return;
   if (event.target.closest("[data-recording-play]")) {
     const preview = document.querySelector("#recordingPreview");
-    preview.src = file.dataset.url;
+    const url = file.dataset.url || recordingFileUrl(file.dataset);
+    if (!url) return;
+    preview.src = url;
     preview.hidden = false;
     preview.play().catch(() => {});
   }
