@@ -361,6 +361,7 @@ name = "rv1126b-video-wall"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-core",
  "serde",
  "serde_json",
  "tokio",

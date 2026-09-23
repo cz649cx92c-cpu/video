@@ -169,13 +169,13 @@
           <div class="settings-backdrop" id="recordingsBackdrop" hidden></div>
           <section class="quality-editor recordings-editor" id="recordingsBody" role="dialog" aria-modal="true" aria-labelledby="recordingsTitle" hidden>
             <div class="editor-head">
-              <span><b id="recordingsTitle">SD 卡录像管理</b><small>直接查看板端已封存的 MP4</small></span>
+              <span><b id="recordingsTitle">SD 卡录像管理</b><small>时间轴仅包含已经封存完成的录像</small></span>
               <button id="closeRecordings" type="button" aria-label="关闭录像管理">×</button>
             </div>
             <div class="recordings-toolbar">
               <label>摄像头
                 <select id="recordingsCamera">
-                  <option value="all">全部摄像头</option>
+                  <option value="all">全部摄像头（请选择单路时间轴）</option>
                   <option value="lower-ch1">下层板 · CH1</option>
                   <option value="lower-ch2">下层板 · CH2</option>
                   <option value="lower-ch3">下层板 · CH3</option>
@@ -189,6 +189,7 @@
               <button class="records-refresh" id="refreshRecordings" type="button">刷新</button>
             </div>
             <video class="recording-preview" id="recordingPreview" controls playsinline hidden></video>
+            <div class="recording-timeline" id="recordingTimeline" aria-label="按时间排列的连续录像" aria-live="polite"></div>
             <div class="recording-list" id="recordingList" aria-live="polite"></div>
             <button class="records-more" id="moreRecordings" type="button" hidden>加载更早录像</button>
             <p class="recordings-status" id="recordingsStatus" role="status">正在读取录像目录…</p>

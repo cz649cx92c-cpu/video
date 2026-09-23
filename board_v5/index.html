@@ -237,6 +237,12 @@
               </label>
               <button class="records-refresh" id="refreshRecordings" type="button">刷新</button>
             </div>
+            <div class="recordings-filters">
+              <label>日期
+                <input id="recordingsDateFilter" type="date" aria-label="按日期筛选录像">
+              </label>
+              <button class="records-clear-filter" id="clearRecordingFilter" type="button">清除筛选</button>
+            </div>
             <div class="recording-player" id="recordingPlayer" hidden>
               <video class="recording-preview" id="recordingPreview" controls playsinline></video>
               <div class="recording-timeline" aria-label="录像总时间轴">
@@ -246,6 +252,7 @@
               </div>
               <p class="recording-playback-status" id="recordingPlaybackStatus">请选择摄像头读取录像时间轴</p>
             </div>
+            <div class="recordings-list-head" aria-hidden="true"><span>已封存片段</span><span>操作</span></div>
             <div class="recording-list" id="recordingList" aria-live="polite"></div>
             <button class="records-more" id="moreRecordings" type="button" hidden>加载更早录像</button>
             <p class="recordings-status" id="recordingsStatus" role="status">正在读取录像目录…</p>
@@ -261,6 +268,6 @@
     </div>
 
     <script src="/vendor/mediamtx-reader.js"></script>
-    <script src="/app-network-memory-v5.js"></script>
+    <script src="/app-network-memory-v5-filter.js"></script>
   </body>
 </html>

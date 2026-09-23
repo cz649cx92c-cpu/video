@@ -1,19 +1,28 @@
 use axum::{
     Router,
+    body::Body,
     extract::{Query, State},
-    http::{HeaderValue, StatusCode, header::CACHE_CONTROL},
+    http::{
+        HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_TYPE},
+    },
     response::{IntoResponse, Json, Response},
     routing::{delete, get},
 };
+use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    env,
+    env, io,
+    pin::Pin,
+    process::Stdio,
     sync::Arc,
+    task::{Context, Poll},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
     sync::RwLock,
     time::{sleep, timeout},
 };
@@ -207,6 +216,24 @@ struct RecordingQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct RecordingStreamQuery {
+    camera: String,
+    start: Option<String>,
+}
+
+struct RecordingByteStream {
+    receiver: tokio::sync::mpsc::Receiver<Result<Vec<u8>, io::Error>>,
+}
+
+impl Stream for RecordingByteStream {
+    type Item = Result<Vec<u8>, io::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().receiver.poll_recv(cx)
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct RecordingDeleteQuery {
     camera: String,
     name: String,
@@ -312,6 +339,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(api_recording_get).post(api_recording_post),
         )
         .route("/api/recordings", get(api_recordings_get))
+        .route("/api/recording/stream", get(api_recording_stream))
         .route("/api/recording/file", delete(api_recording_delete))
         .fallback_service(ServeDir::new(&web_root).append_index_html_on_directories(true))
         .layer(cache_layer)
@@ -563,6 +591,223 @@ async fn api_recordings_get(
         )
             .into_response(),
     }
+}
+
+async fn load_recording_files(
+    state: &AppState,
+    camera: &str,
+    start_name: Option<&str>,
+) -> Result<Vec<RecordingFile>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut files = Vec::new();
+    let mut offset = 0_u32;
+    loop {
+        let path = format!("/recordings.json?camera={camera}&offset={offset}&limit=100");
+        let page = fetch_board_json::<RecordingFilePage>(
+            &state.board_host,
+            state.status_port,
+            "GET",
+            &path,
+            None,
+        )
+        .await?;
+        let total = page.total;
+        let raw_page_len = page.files.len() as u32;
+        let page_files: Vec<RecordingFile> = page
+            .files
+            .into_iter()
+            .filter(|file| valid_recording_name(&file.name))
+            .collect();
+        if let Some(start_name) = start_name {
+            if let Some(start_index) = page_files.iter().position(|file| file.name == start_name) {
+                // The board returns newest-first. Keep the prefix through the
+                // requested file; sorting below changes it to playback order.
+                files.extend(page_files.into_iter().take(start_index + 1));
+                break;
+            }
+            files.extend(page_files);
+        } else {
+            files.extend(page_files);
+        }
+        offset = offset.saturating_add(raw_page_len);
+        if offset >= total || raw_page_len == 0 {
+            break;
+        }
+    }
+    if start_name.is_some()
+        && !start_name.is_some_and(|name| files.iter().any(|file| file.name == name))
+    {
+        return Ok(Vec::new());
+    }
+    files.sort_by(|left, right| {
+        left.modified_epoch
+            .cmp(&right.modified_epoch)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(files)
+}
+
+async fn api_recording_stream(
+    State(state): State<AppState>,
+    Query(query): Query<RecordingStreamQuery>,
+) -> Response {
+    if query.camera == "all" || !valid_camera_id(&query.camera) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "连续播放必须选择一个摄像头".into(),
+            }),
+        )
+            .into_response();
+    }
+    if query
+        .start
+        .as_deref()
+        .is_some_and(|name| !valid_recording_name(name))
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "无效的起始录像文件名".into(),
+            }),
+        )
+            .into_response();
+    }
+    let files = match load_recording_files(&state, &query.camera, query.start.as_deref()).await {
+        Ok(files) if !files.is_empty() => files,
+        Ok(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiError {
+                    error: "当前摄像头没有已封存录像".into(),
+                }),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiError {
+                    error: format!("无法读取连续播放分片: {error}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+    if query.start.is_some()
+        && !query
+            .start
+            .as_ref()
+            .is_some_and(|name| files.iter().any(|file| file.name == *name))
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "找不到起始录像分片".into(),
+            }),
+        )
+            .into_response();
+    }
+    let ffmpeg = env::var("RV1126B_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
+    let list_path = env::temp_dir().join(format!(
+        "rv1126b-recording-{}-{}.txt",
+        std::process::id(),
+        now_ms()
+    ));
+    let mut concat_list = String::new();
+    for file in &files {
+        concat_list.push_str(&format!(
+            "file 'http://{}:{}/recording.mp4?camera={}&name={}'\n",
+            state.board_host, state.status_port, query.camera, file.name
+        ));
+    }
+    if let Err(error) = tokio::fs::write(&list_path, concat_list).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("无法创建连续播放清单: {error}"),
+            }),
+        )
+            .into_response();
+    }
+    let mut child = match Command::new(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-protocol_whitelist",
+            "file,http,https,tcp,tls,crypto",
+            "-i",
+        ])
+        .arg(&list_path)
+        .args([
+            "-map",
+            "0:v:0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+frag_keyframe+empty_moov+default_base_moof",
+            "-f",
+            "mp4",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&list_path).await;
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiError {
+                    error: format!("无法启动连续播放封装器: {error}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = tokio::fs::remove_file(&list_path).await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: "连续播放封装器没有输出流".into(),
+            }),
+        )
+            .into_response();
+    };
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<Vec<u8>, io::Error>>(8);
+    tokio::spawn(async move {
+        let mut buffer = vec![0_u8; 64 * 1024];
+        loop {
+            match stdout.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(size) => {
+                    if sender.send(Ok(buffer[..size].to_vec())).await.is_err() {
+                        let _ = child.kill().await;
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    break;
+                }
+            }
+        }
+        let _ = child.wait().await;
+        let _ = tokio::fs::remove_file(&list_path).await;
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "video/mp4")
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(RecordingByteStream { receiver }))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 async fn api_recording_delete(

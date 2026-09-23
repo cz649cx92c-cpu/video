@@ -31,6 +31,9 @@ const state = {
   recordingsTrigger: null,
   recordings: null,
   recordingsOffset: 0,
+  recordingQueue: [],
+  recordingIndex: -1,
+  recordingLoadToken: 0,
 };
 
 const grid = document.querySelector("#videoGrid");
@@ -579,6 +582,110 @@ function recordingFileUrl(file = {}) {
   return `/api/recording/file?camera=${encodeURIComponent(file.camera)}&name=${encodeURIComponent(file.name)}`;
 }
 
+function recordingFileCompare(left, right) {
+  const time = Number(left.modified_epoch || 0) - Number(right.modified_epoch || 0);
+  return time || String(left.name || "").localeCompare(String(right.name || ""));
+}
+
+function recordingLabel(file) {
+  return `${formatRecordingTime(file.modified_epoch)} · ${formatRecordingSize(file.size_bytes)}`;
+}
+
+function recordingStreamUrl(file) {
+  return `/api/recording/stream?camera=${encodeURIComponent(file.camera)}&start=${encodeURIComponent(file.name)}`;
+}
+
+function archivedRecordingFiles(files) {
+  return (files || []).filter((file) => {
+    const name = String(file?.name || "");
+    return /\.mp4$/i.test(name) && Number(file?.size_bytes || 0) > 0;
+  });
+}
+
+function recordingSegmentSeconds() {
+  const value = Number(state.recording?.segment_seconds);
+  return Number.isFinite(value) && value >= 1 ? value : 30;
+}
+
+function recordingTimelineInfo(files) {
+  const segmentSeconds = recordingSegmentSeconds();
+  const firstEpoch = Number(files[0]?.modified_epoch || 0);
+  const lastEpoch = Number(files.at(-1)?.modified_epoch || firstEpoch);
+  const elapsedSeconds = Math.max(segmentSeconds, lastEpoch - firstEpoch + segmentSeconds);
+  return { firstEpoch, elapsedSeconds, segmentSeconds };
+}
+
+function recordingIndexAtOffset(files, offsetSeconds) {
+  const { firstEpoch, segmentSeconds } = recordingTimelineInfo(files);
+  const targetEpoch = firstEpoch + Math.max(0, Number(offsetSeconds) || 0);
+  let index = 0;
+  for (let i = 1; i < files.length; i += 1) {
+    if (Number(files[i].modified_epoch || 0) > targetEpoch) break;
+    index = i;
+  }
+  if (files.length && targetEpoch < firstEpoch + segmentSeconds) return 0;
+  return Math.min(index, files.length - 1);
+}
+
+function recordingOffsetForIndex(files, index) {
+  const { firstEpoch, segmentSeconds } = recordingTimelineInfo(files);
+  const fileEpoch = Number(files[index]?.modified_epoch || firstEpoch);
+  return Math.max(0, fileEpoch - firstEpoch || index * segmentSeconds);
+}
+
+function formatRecordingTimelineTime(epoch) {
+  return new Date(Number(epoch) * 1000).toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
+function updateRecordingTimelineReadout(offsetSeconds) {
+  const files = state.recordingQueue;
+  const readout = document.querySelector("#recordingTimelineCurrent");
+  if (!files.length || !readout) return;
+  const { firstEpoch, elapsedSeconds } = recordingTimelineInfo(files);
+  const offset = Math.max(0, Math.min(elapsedSeconds, Number(offsetSeconds) || 0));
+  readout.textContent = formatRecordingTimelineTime(firstEpoch + offset);
+}
+
+function renderRecordingTimeline(files) {
+  const timeline = document.querySelector("#recordingTimeline");
+  if (!files.length) {
+    timeline.innerHTML = '<p class="recordings-empty">当前摄像头没有可连续播放的录像</p>';
+    return;
+  }
+  const { firstEpoch, elapsedSeconds } = recordingTimelineInfo(files);
+  timeline.innerHTML = `
+    <div class="recording-timeline-head"><b>历史录像时间轴</b><span>${files.length} 个已封存分片</span></div>
+    <div class="recording-timeline-current" id="recordingTimelineCurrent">${formatRecordingTimelineTime(firstEpoch)}</div>
+    <input class="recording-scrubber" id="recordingScrubber" type="range" min="0" max="${elapsedSeconds}" step="1" value="0" aria-label="录像时间进度">
+    <div class="recording-timeline-range"><span>${formatRecordingTimelineTime(firstEpoch)}</span><span>${formatRecordingTimelineTime(firstEpoch + elapsedSeconds)}</span></div>`;
+}
+
+function markRecordingIndex(index) {
+  document.querySelectorAll(".recording-file").forEach((row) => {
+    row.classList.toggle("is-active", Number(row.dataset.recordingIndex) === index);
+  });
+  const scrubber = document.querySelector("#recordingScrubber");
+  const offset = recordingOffsetForIndex(state.recordingQueue, index);
+  if (scrubber) scrubber.value = String(offset);
+  updateRecordingTimelineReadout(offset);
+}
+
+function playRecordingAt(index) {
+  const file = state.recordingQueue[index];
+  const preview = document.querySelector("#recordingPreview");
+  if (!file) return;
+  const url = recordingStreamUrl(file);
+  if (!url) return;
+  state.recordingIndex = index;
+  preview.src = url;
+  preview.hidden = false;
+  preview.load();
+  markRecordingIndex(index);
+  preview.play().catch(() => {});
+}
+
 function closeRecordings({ restoreFocus = true } = {}) {
   const form = document.querySelector("#recordingsBody");
   const backdrop = document.querySelector("#recordingsBackdrop");
@@ -600,11 +707,11 @@ function renderRecordings(page, append = false) {
     if (!append) list.innerHTML = '<p class="recordings-empty">当前筛选没有已封存的录像</p>';
     return;
   }
-  const rows = page.files.map((file) => {
+  const rows = page.files.map((file, index) => {
     const url = recordingFileUrl(file);
     return `
-    <article class="recording-file" data-url="${url}" data-camera="${file.camera}" data-name="${file.name}">
-      <div><b>${file.camera.replace("-", " · ").toUpperCase()}</b><span>${formatRecordingTime(file.modified_epoch)} · ${formatRecordingSize(file.size_bytes)}</span></div>
+    <article class="recording-file" data-url="${url}" data-camera="${file.camera}" data-name="${file.name}" data-recording-index="${index}">
+      <div><b>${file.camera.replace("-", " · ").toUpperCase()}</b><span>${recordingLabel(file)}</span></div>
       <div class="recording-file-actions">
         <button type="button" data-recording-play>播放</button>
         <a href="${url}" download="${file.name}">下载</a>
@@ -620,25 +727,75 @@ async function loadRecordings({ append = false } = {}) {
   const status = document.querySelector("#recordingsStatus");
   const list = document.querySelector("#recordingList");
   const camera = document.querySelector("#recordingsCamera").value;
-  if (!append) state.recordingsOffset = 0;
+  if (!append) {
+    state.recordingLoadToken += 1;
+    state.recordingsOffset = 0;
+    state.recordingQueue = [];
+    state.recordingIndex = -1;
+    const preview = document.querySelector("#recordingPreview");
+    preview.pause();
+    preview.hidden = true;
+  }
   status.textContent = "正在读取录像目录…";
   status.dataset.kind = "loading";
   try {
-    const response = await fetch(`/api/recordings?camera=${encodeURIComponent(camera)}&offset=${state.recordingsOffset}&limit=100`, { cache: "no-store" });
+    if (camera === "all") {
+      state.recordings = { files: [], total: 0 };
+      renderRecordings(state.recordings);
+      renderRecordingTimeline([]);
+      status.textContent = "请选择一个摄像头查看连续时间轴";
+      status.dataset.kind = "success";
+      return;
+    }
+    const token = state.recordingLoadToken;
+    const response = await fetch(`/api/recordings?camera=${encodeURIComponent(camera)}&offset=0&limit=100`, { cache: "no-store" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    state.recordings = data;
-    renderRecordings(data, append);
-    state.recordingsOffset += data.files.length;
+    const files = archivedRecordingFiles(data.files);
+    const total = data.total || files.length;
+    files.sort(recordingFileCompare);
+    state.recordingQueue = files;
+    state.recordings = { camera, files, total: files.length };
+    renderRecordingTimeline(files);
+    renderRecordings({ files, total: files.length });
+    state.recordingsOffset = files.length;
     const more = document.querySelector("#moreRecordings");
-    more.hidden = state.recordingsOffset >= data.total;
-    status.textContent = `已显示 ${state.recordingsOffset} / ${data.total} 个已封存文件`;
+    more.hidden = true;
+    status.textContent = files.length ? `已显示最近 ${files.length} 个已封存分片，拖动时间轴可连续播放` : "当前摄像头没有已封存录像";
     status.dataset.kind = "success";
+    if (total > files.length) {
+      void loadOlderRecordingPages(camera, files.length, total, token).catch((error) => {
+        if (token === state.recordingLoadToken) {
+          status.textContent = error.message || "更早录像读取失败";
+          status.dataset.kind = "error";
+        }
+      });
+    }
   } catch (error) {
     list.innerHTML = "";
     status.textContent = error.message || "录像目录读取失败";
     status.dataset.kind = "error";
   }
+}
+
+async function loadOlderRecordingPages(camera, offset, total, token) {
+  if (token !== state.recordingLoadToken || camera !== document.querySelector("#recordingsCamera").value) return;
+  const offsets = [];
+  for (let cursor = offset; cursor < total; cursor += 100) offsets.push(cursor);
+  const pages = await Promise.all(offsets.map(async (cursor) => {
+    const response = await fetch(`/api/recordings?camera=${encodeURIComponent(camera)}&offset=${cursor}&limit=100`, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return archivedRecordingFiles(data.files);
+  }));
+  if (token !== state.recordingLoadToken || camera !== document.querySelector("#recordingsCamera").value) return;
+  state.recordingQueue = [...state.recordingQueue, ...pages.flat(),].sort(recordingFileCompare);
+  state.recordings = { camera, files: state.recordingQueue, total: state.recordingQueue.length };
+  renderRecordingTimeline(state.recordingQueue);
+  renderRecordings({ files: state.recordingQueue, total: state.recordingQueue.length });
+  if (state.recordingIndex >= 0) markRecordingIndex(state.recordingIndex);
+  const status = document.querySelector("#recordingsStatus");
+  status.textContent = `已显示 ${state.recordingQueue.length} / ${total} 个已封存分片`;
 }
 
 async function toggleRecordings(trigger) {
@@ -672,16 +829,28 @@ document.querySelector("#recordingsBackdrop").addEventListener("click", closeRec
 document.querySelector("#refreshRecordings").addEventListener("click", loadRecordings);
 document.querySelector("#recordingsCamera").addEventListener("change", loadRecordings);
 document.querySelector("#moreRecordings").addEventListener("click", () => loadRecordings({ append: true }));
+document.querySelector("#recordingTimeline").addEventListener("input", (event) => {
+  if (event.target.id !== "recordingScrubber") return;
+  updateRecordingTimelineReadout(Number(event.target.value));
+});
+document.querySelector("#recordingTimeline").addEventListener("change", (event) => {
+  if (event.target.id !== "recordingScrubber") return;
+  playRecordingAt(recordingIndexAtOffset(state.recordingQueue, Number(event.target.value)));
+});
+document.querySelector("#recordingPreview").addEventListener("timeupdate", (event) => {
+  const preview = event.currentTarget;
+  if (state.recordingIndex < 0 || !Number.isFinite(preview.currentTime)) return;
+  const slider = document.querySelector("#recordingScrubber");
+  if (!slider) return;
+  const offset = recordingOffsetForIndex(state.recordingQueue, state.recordingIndex) + preview.currentTime;
+  slider.value = String(Math.min(Number(slider.max), offset));
+  updateRecordingTimelineReadout(offset);
+});
 document.querySelector("#recordingList").addEventListener("click", async (event) => {
   const file = event.target.closest(".recording-file");
   if (!file) return;
   if (event.target.closest("[data-recording-play]")) {
-    const preview = document.querySelector("#recordingPreview");
-    const url = file.dataset.url || recordingFileUrl(file.dataset);
-    if (!url) return;
-    preview.src = url;
-    preview.hidden = false;
-    preview.play().catch(() => {});
+    playRecordingAt(Number(file.dataset.recordingIndex));
   }
   if (event.target.closest("[data-recording-delete]")) {
     if (!window.confirm("确定删除这个录像文件吗？")) return;

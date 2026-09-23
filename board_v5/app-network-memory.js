@@ -30,6 +30,9 @@ const state = {
   recordingCloseTimer: null,
   recordingsTrigger: null,
   recordings: null,
+  recordingFiles: [],
+  recordingFilterDate: "",
+  recordingTimelineFiles: [],
   recordingsOffset: 0,
   recordingTimelineToken: 0,
   recordingPlaylist: [],
@@ -812,6 +815,20 @@ function recordingFileUrl(file = {}) {
   return `/api/recording/file?camera=${encodeURIComponent(file.camera)}&name=${encodeURIComponent(file.name)}`;
 }
 
+function recordingMatchesFilter(file) {
+  if (!state.recordingFilterDate) return true;
+  const date = new Date(Number(file.modified_epoch || 0) * 1000);
+  if (!Number.isFinite(date.getTime())) return false;
+  const localDate = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((value) => String(value).padStart(2, "0"))
+    .join("-");
+  return localDate === state.recordingFilterDate;
+}
+
+function filteredRecordingFiles(files = []) {
+  return files.filter(recordingMatchesFilter);
+}
+
 function closeRecordings({ restoreFocus = true } = {}) {
   state.recordingTimelineToken += 1;
   const form = document.querySelector("#recordingsBody");
@@ -830,11 +847,12 @@ function closeRecordings({ restoreFocus = true } = {}) {
 
 function renderRecordings(page, append = false) {
   const list = document.querySelector("#recordingList");
-  if (!page.files?.length) {
-    if (!append) list.innerHTML = '<p class="recordings-empty">当前筛选没有已封存的录像</p>';
+  const files = filteredRecordingFiles(page.files || []);
+  if (!files.length) {
+    list.innerHTML = '<p class="recordings-empty">当前筛选没有已封存的录像</p>';
     return;
   }
-  const rows = page.files.map((file) => {
+  const rows = files.map((file) => {
     const url = recordingFileUrl(file);
     return `
     <article class="recording-file" data-url="${url}" data-camera="${file.camera}" data-name="${file.name}">
@@ -846,8 +864,46 @@ function renderRecordings(page, append = false) {
       </div>
     </article>`;
   }).join("");
-  if (append) list.insertAdjacentHTML("beforeend", rows);
-  else list.innerHTML = rows;
+  list.innerHTML = rows;
+}
+
+function rebuildRecordingPlaylist() {
+  const activeName = state.recordingPlaylist[state.recordingActiveIndex]?.name;
+  state.recordingPlaylist = filteredRecordingFiles(state.recordingTimelineFiles)
+    .filter((file) => file && file.name && file.name.endsWith(".mp4") && !file.name.endsWith(".mp4.part"))
+    .sort((left, right) => Number(left.modified_epoch) - Number(right.modified_epoch) || left.name.localeCompare(right.name));
+  state.recordingDurations = state.recordingPlaylist.map(() => RECORDING_SEGMENT_SECONDS);
+  const player = document.querySelector("#recordingPlayer");
+  const scrubber = document.querySelector("#recordingScrubber");
+  player.hidden = !state.recordingPlaylist.length;
+  scrubber.disabled = !state.recordingPlaylist.length;
+  if (activeName) {
+    state.recordingActiveIndex = state.recordingPlaylist.findIndex((file) => file.name === activeName);
+    if (state.recordingActiveIndex < 0) {
+      document.querySelector("#recordingPreview").pause();
+      document.querySelector("#recordingPreview").removeAttribute("src");
+      document.querySelector("#recordingPreview").load();
+      state.recordingActiveIndex = -1;
+    }
+  }
+  rebuildRecordingOffsets();
+}
+
+function applyRecordingFilter() {
+  renderRecordings({ files: state.recordingFiles });
+  rebuildRecordingPlaylist();
+  const total = state.recordingFiles.length;
+  const visible = filteredRecordingFiles(state.recordingFiles).length;
+  const status = document.querySelector("#recordingsStatus");
+  status.textContent = state.recordingFilterDate
+    ? `日期 ${state.recordingFilterDate} · 显示 ${visible} / ${total} 个已封存文件`
+    : `已显示 ${visible} 个已封存文件`;
+  status.dataset.kind = "success";
+  if (state.recordingPlaylist.length) {
+    setRecordingPlaybackStatus(`筛选后保留 ${state.recordingPlaylist.length} 段录像，可拖动总时间轴定位`);
+  } else if (state.recordingFilterDate) {
+    setRecordingPlaybackStatus("当前日期没有可连续播放的录像");
+  }
 }
 
 const RECORDING_SEGMENT_SECONDS = 30;
@@ -950,18 +1006,8 @@ async function loadRecordingTimeline(camera, firstPage, token) {
   const publishTimeline = (final = false) => {
     if (token !== state.recordingTimelineToken) return;
     const activeName = state.recordingPlaylist[state.recordingActiveIndex]?.name;
-    state.recordingPlaylist = files
-      .filter((file) => file && file.name && file.name.endsWith(".mp4") && !file.name.endsWith(".mp4.part"))
-      .sort((left, right) => Number(left.modified_epoch) - Number(right.modified_epoch) || left.name.localeCompare(right.name));
-    state.recordingDurations = state.recordingPlaylist.map(() => RECORDING_SEGMENT_SECONDS);
-    rebuildRecordingOffsets();
-    const player = document.querySelector("#recordingPlayer");
-    const scrubber = document.querySelector("#recordingScrubber");
-    player.hidden = !state.recordingPlaylist.length;
-    scrubber.disabled = !state.recordingPlaylist.length;
-    if (activeName) {
-      state.recordingActiveIndex = state.recordingPlaylist.findIndex((file) => file.name === activeName);
-    }
+    state.recordingTimelineFiles = files;
+    rebuildRecordingPlaylist();
     if (final) {
       setRecordingPlaybackStatus(`已载入 ${state.recordingPlaylist.length} 段已封存录像，可拖动总时间轴定位`);
     } else {
@@ -1004,8 +1050,9 @@ async function loadRecordings({ append = false } = {}) {
     const response = await fetch(`/api/recordings?camera=${encodeURIComponent(camera)}&offset=${state.recordingsOffset}&limit=100`, { cache: "no-store" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    state.recordings = data;
-    renderRecordings(data, append);
+    state.recordingFiles = append ? [...state.recordingFiles, ...(data.files || [])] : [...(data.files || [])];
+    state.recordings = { ...data, files: state.recordingFiles };
+    renderRecordings({ files: state.recordingFiles });
     state.recordingsOffset += data.files.length;
     const more = document.querySelector("#moreRecordings");
     more.hidden = state.recordingsOffset >= data.total;
@@ -1053,6 +1100,15 @@ document.querySelector("#recordingsBackdrop").addEventListener("click", closeRec
 document.querySelector("#refreshRecordings").addEventListener("click", loadRecordings);
 document.querySelector("#recordingsCamera").addEventListener("change", loadRecordings);
 document.querySelector("#moreRecordings").addEventListener("click", () => loadRecordings({ append: true }));
+document.querySelector("#recordingsDateFilter").addEventListener("input", (event) => {
+  state.recordingFilterDate = event.currentTarget.value;
+  applyRecordingFilter();
+});
+document.querySelector("#clearRecordingFilter").addEventListener("click", () => {
+  state.recordingFilterDate = "";
+  document.querySelector("#recordingsDateFilter").value = "";
+  applyRecordingFilter();
+});
 document.querySelector("#recordingList").addEventListener("click", async (event) => {
   const file = event.target.closest(".recording-file");
   if (!file) return;

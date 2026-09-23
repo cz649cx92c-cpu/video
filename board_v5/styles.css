@@ -236,6 +236,11 @@ button { color: inherit; }
 .recordings-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
 .recordings-toolbar label { display: grid; gap: 6px; color: var(--muted); font-size: 8px; }
 .recordings-toolbar select { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--line); background: #fff; color: var(--text); font: 9px/1 inherit; }
+.recordings-filters { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.recordings-filters label { display: grid; gap: 6px; color: var(--muted); font-size: 8px; }
+.recordings-filters input { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--line); background: #fff; color: var(--text); font: 9px/1 inherit; }
+.records-clear-filter { height: 30px; padding: 0 10px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 8px; cursor: pointer; }
+.records-clear-filter:hover { border-color: var(--accent); color: var(--accent); }
 .records-refresh { height: 32px; padding: 0 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 8px; cursor: pointer; }
 .records-refresh:hover { border-color: var(--accent); color: var(--accent); }
 .recording-player { display: grid; gap: 7px; }
@@ -263,6 +268,202 @@ button { color: inherit; }
 .records-more { width: 100%; padding: 8px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 8px; cursor: pointer; }
 .records-more:hover { border-color: var(--accent); color: var(--accent); }
 .records-more[hidden] { display: none; }
+
+/* Recording manager: keep the dense utility surface readable at a glance. */
+.recordings-editor {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid rgba(46,139,87,.28);
+  border-top: 3px solid var(--accent);
+  border-radius: 16px;
+  background: rgba(255,255,255,.98);
+  box-shadow: 0 24px 70px rgba(23,52,35,.22), 0 8px 24px rgba(23,52,35,.1);
+}
+.recordings-editor .editor-head {
+  align-items: center;
+  padding-bottom: 15px;
+  border-bottom-color: rgba(26,43,34,.14);
+}
+.recordings-editor .editor-head span { gap: 6px; }
+.recordings-editor .editor-head b { font-size: 15px; letter-spacing: -.02em; }
+.recordings-editor .editor-head small { font-size: 10px; }
+.recordings-editor .editor-head button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #f7faf7;
+  font-size: 21px;
+  transition: color .2s, border-color .2s, background .2s, transform .2s;
+}
+.recordings-editor .editor-head button:hover {
+  border-color: rgba(46,139,87,.42);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: rotate(90deg);
+}
+.recordings-toolbar, .recordings-filters {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(26,43,34,.09);
+  border-radius: 12px;
+  background: #f5f8f4;
+}
+.recordings-toolbar label, .recordings-filters label {
+  gap: 7px;
+  color: #65736a;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.recordings-toolbar select, .recordings-filters input {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(26,43,34,.15);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.recordings-toolbar select:focus, .recordings-filters input:focus {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.records-refresh, .records-clear-filter {
+  height: 40px;
+  padding: 0 15px;
+  border: 1px solid rgba(26,43,34,.15);
+  border-radius: 9px;
+  background: #fff;
+  color: #5d6a62;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color .2s, color .2s, background .2s, transform .2s;
+}
+.records-refresh:hover, .records-clear-filter:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+.recording-player {
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(26,43,34,.12);
+  border-radius: 14px;
+  background: #f3f6f3;
+}
+.recording-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: none;
+  border-radius: 10px;
+  background: #131a16;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.recording-timeline {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+.recording-time {
+  color: #53645a;
+  font-size: 10px;
+  font-weight: 650;
+}
+#recordingScrubber { height: 20px; }
+.recording-playback-status {
+  min-height: 16px;
+  color: #6a786e;
+  font-size: 10px;
+}
+.recording-playback-status[data-kind="error"] { color: var(--danger); }
+.recordings-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px;
+  color: #7a877e;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.recording-list {
+  max-height: 310px;
+  padding: 0 12px;
+  overflow-y: auto;
+  border: 1px solid rgba(26,43,34,.12);
+  border-radius: 12px;
+  background: #fbfcfb;
+  scrollbar-color: #b9c7bc transparent;
+}
+.recording-file {
+  min-height: 58px;
+  gap: 14px;
+  padding: 11px 2px;
+  border-bottom-color: rgba(26,43,34,.09);
+}
+.recording-file:last-child { border-bottom: 0; }
+.recording-file.is-active {
+  margin: 0 -2px;
+  padding-right: 4px;
+  padding-left: 4px;
+  border-radius: 8px;
+  background: rgba(46,139,87,.08);
+}
+.recording-file > div:first-child { gap: 5px; }
+.recording-file b { font-size: 10px; letter-spacing: .03em; }
+.recording-file span { font-size: 9px; }
+.recording-file-actions { gap: 6px; }
+.recording-file-actions button, .recording-file-actions a {
+  min-width: 47px;
+  padding: 7px 9px;
+  border: 1px solid rgba(26,43,34,.14);
+  border-radius: 7px;
+  background: #fff;
+  color: #65736a;
+  font-size: 9px;
+  font-weight: 650;
+  text-align: center;
+  transition: border-color .2s, color .2s, background .2s, transform .2s;
+}
+.recording-file-actions button:hover, .recording-file-actions a:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+.recording-file-actions button:last-child:hover {
+  border-color: rgba(212,81,71,.45);
+  background: rgba(212,81,71,.08);
+  color: var(--danger);
+}
+.recordings-empty {
+  margin: 0;
+  padding: 30px 0;
+  font-size: 10px;
+}
+.records-more {
+  padding: 10px;
+  border: 1px dashed rgba(26,43,34,.2);
+  border-radius: 9px;
+  background: #f8faf8;
+  font-size: 10px;
+  font-weight: 650;
+}
+.recordings-status {
+  min-height: 16px;
+  color: #718076;
+  font-size: 10px;
+}
+.settings-backdrop.is-open { background: rgba(22,35,27,.2); backdrop-filter: blur(4px); }
 
 @media (min-width: 1450px) {
   .shell { grid-template-columns: 210px minmax(0, 1fr) 296px; }

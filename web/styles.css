@@ -212,8 +212,15 @@ button { color: inherit; }
 .records-refresh { height: 32px; padding: 0 12px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 8px; cursor: pointer; }
 .records-refresh:hover { border-color: var(--accent); color: var(--accent); }
 .recording-preview { width: 100%; max-height: 230px; background: #18201b; object-fit: contain; }
+.recording-timeline { display: grid; gap: 7px; padding: 9px 0 4px; border-top: 1px solid var(--line); }
+.recording-timeline-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--text); font-size: 8px; }
+.recording-timeline-head span { color: var(--muted); font-size: 7px; }
+.recording-timeline-current { color: var(--accent); font: 700 8px/1.2 Consolas, monospace; font-variant-numeric: tabular-nums; }
+.recording-scrubber { width: 100%; height: 22px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.recording-timeline-range { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font: 7px/1.2 Consolas, monospace; }
 .recording-list { display: grid; max-height: 300px; overflow-y: auto; border-top: 1px solid var(--line); }
 .recording-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.recording-file.is-active { background: rgba(46,139,87,.07); }
 .recording-file > div:first-child { display: grid; min-width: 0; gap: 4px; }
 .recording-file b { overflow: hidden; color: var(--text); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .recording-file span { color: var(--muted); font-size: 7px; font-variant-numeric: tabular-nums; }
