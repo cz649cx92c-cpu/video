@@ -38,6 +38,7 @@ const state = {
   recordingTotalDuration: 0,
   recordingActiveIndex: -1,
   recordingSeekTarget: null,
+  networkStatus: { wifiConnected: false, apEnabled: false },
   networkTrigger: null,
   networkCloseTimer: null,
 };
@@ -263,6 +264,31 @@ function setNetworkStatus(selector, message, kind = "idle") {
   status.dataset.kind = kind;
 }
 
+function updateNetworkDot() {
+  const dot = document.querySelector("#networkDot");
+  if (!dot) return;
+  const online = state.networkStatus.wifiConnected || state.networkStatus.apEnabled;
+  dot.className = online ? "online" : "";
+}
+
+async function refreshNetworkIndicator() {
+  const requests = [
+    ["wifiConnected", "/api/wifi", (data) => data.connected === true],
+    ["apEnabled", "/api/ap", (data) => data.enabled === true],
+  ];
+  await Promise.all(requests.map(async ([key, url, readState]) => {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      state.networkStatus[key] = readState(data);
+    } catch (_error) {
+      // Keep the last known state when a transient network request fails.
+    }
+  }));
+  updateNetworkDot();
+}
+
 const networkCredentialKeys = {
   wifi: { ssid: "rv1126b.wifi.ssid", password: "rv1126b.wifi.password" },
   ap: { ssid: "rv1126b.ap.ssid", password: "rv1126b.ap.password" },
@@ -314,7 +340,8 @@ async function loadApStatus() {
     if (data.ssid) form.elements.ssid.value = data.ssid;
     if (data.password) form.elements.password.value = data.password;
     setNetworkStatus("#apStatus", data.enabled ? `热点已开启 · ${data.ssid || "未命名"} · ${data.address || "192.168.0.1"}` : "AP 热点当前未开启", data.enabled ? "success" : "idle");
-    document.querySelector("#networkDot").className = data.enabled ? "online" : "";
+    state.networkStatus.apEnabled = data.enabled === true;
+    updateNetworkDot();
   } catch (error) {
     setNetworkStatus("#apStatus", error.message || "AP 状态读取失败", "error");
   }
@@ -328,7 +355,8 @@ async function loadWifiStatus() {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     const text = data.connected ? `已连接 · ${data.ssid || "Wi-Fi"}${data.address ? ` · ${data.address}` : ""}` : "Wi-Fi 当前未连接";
     setNetworkStatus("#wifiStatus", text, data.connected ? "success" : "idle");
-    if (data.connected) document.querySelector("#networkDot").className = "online";
+    state.networkStatus.wifiConnected = data.connected === true;
+    updateNetworkDot();
   } catch (error) {
     setNetworkStatus("#wifiStatus", "板端暂未提供连接 Wi-Fi 接口（AP 功能不受影响）", "error");
   }
@@ -418,7 +446,8 @@ async function saveWifi(event) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     setNetworkStatus("#wifiStatus", `已连接 · ${data.ssid || form.elements.ssid.value}`, "success");
-    document.querySelector("#networkDot").className = "online";
+    state.networkStatus.wifiConnected = true;
+    updateNetworkDot();
   } catch (error) {
     setNetworkStatus("#wifiStatus", error.message || "Wi-Fi 连接失败", "error");
   } finally {
@@ -442,7 +471,8 @@ async function saveAp(event) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     setNetworkStatus("#apStatus", data.enabled ? `热点已开启 · ${form.elements.ssid.value.trim()}` : "AP 热点已关闭", data.enabled ? "success" : "idle");
-    document.querySelector("#networkDot").className = data.enabled ? "online" : "";
+    state.networkStatus.apEnabled = data.enabled === true;
+    updateNetworkDot();
   } catch (error) {
     setNetworkStatus("#apStatus", error.message || "AP 设置失败", "error");
   } finally {
@@ -1276,6 +1306,8 @@ updateQualityAllAction();
 updateClock();
 setInterval(updateClock, 1000);
 refresh();
+refreshNetworkIndicator();
+setInterval(refreshNetworkIndicator, 5000);
 refreshRecording();
 setInterval(refreshRecording, 2000);
 window.addEventListener("load", () => setTimeout(() => document.querySelector("#boot").classList.add("is-hidden"), 500));
