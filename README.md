@@ -4,7 +4,7 @@ RV1126B 多摄像头 WebRTC 本地监看台。接收板端 8 个摄像头位置�
 
 ## v5 新增功能（当前 RV1126B 板端版本）
 
-本分支的 `board_v5/` 是从正在运行的 RV1126B（`192.168.100.125`）直接取回的发布快照，网页入口是 `app-network-memory.js`。
+本分支的 `board_v5/` 是从正在运行的 RV1126B（`192.168.100.125`）直接取回的发布快照，网页入口是 `app-network-memory-v5.js`。
 
 - 单个摄像头显示一条完整历史时间轴，不再把 30 秒录像误解为互相独立的播放任务。
 - 时间轴只纳入已经封存完成的 `.mp4`，正在录制的 `.mp4.part` 不参与时间轴，避免拖动到尚未完成的文件。
@@ -19,7 +19,7 @@ RV1126B 多摄像头 WebRTC 本地监看台。接收板端 8 个摄像头位置�
 
 | 快照文件 | 板端位置 |
 |---|---|
-| `board_v5/app-network-memory.js` | `/userdata/rv_web/app-network-memory.js` |
+| `board_v5/app-network-memory-v5.js` | `/userdata/rv_web/app-network-memory-v5.js` |
 | `board_v5/index.html` | `/userdata/rv_web/index.html` |
 | `board_v5/styles.css` | `/userdata/rv_web/styles.css` |
 | `board_v5/rv1126b_autostart.sh` | `/userdata/rv1126b_autostart.sh` |

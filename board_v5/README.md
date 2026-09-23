@@ -6,13 +6,13 @@ This directory is an exact source snapshot of the files currently deployed on th
 
 | File | Board path |
 |---|---|
-| `app-network-memory.js` | `/userdata/rv_web/app-network-memory.js` |
+| `app-network-memory-v5.js` | `/userdata/rv_web/app-network-memory-v5.js` |
 | `index.html` | `/userdata/rv_web/index.html` |
 | `styles.css` | `/userdata/rv_web/styles.css` |
 | `rv1126b_autostart.sh` | `/userdata/rv1126b_autostart.sh` |
 | `mediamtx-rv1126b.yml` | `/userdata/mediamtx-rv1126b.yml` |
 
-`index.html` loads `/app-network-memory.js`, so the filename must remain unchanged during deployment.
+`index.html` loads `/app-network-memory-v5.js`. The board's static file server does not support query strings on asset paths, so the cache-busting version is part of the filename.
 
 ## v5 behavior
 
