@@ -23,6 +23,6 @@ This directory is an exact source snapshot of the files currently deployed on th
 - Segment durations are corrected from loaded video metadata, including a short final segment.
 - Recent recordings are shown first, older pages load sequentially in the background, and closing the dialog invalidates pending loads.
 - `lower-ch1-sub` and `upper-ch1-sub` are configured with `sourceOnDemand: false`; the startup script waits briefly for them before exposing the board web service.
-- The network indicator reads Wi-Fi and AP status on page startup and every five seconds. It is green when either connection is active, without requiring the network settings button to be opened.
+- The network indicator reads Wi-Fi and AP status on page startup and every five seconds, and also treats a reachable `/api/streams` endpoint as an active wired connection. It is green without requiring the network settings button to be opened.
 
 The snapshot does not include board-specific compiled binaries. The running board services remain `/userdata/ap_board_web_server`, `/userdata/mediamtx`, and `/videotuiliu/bin/videotuiliu`.

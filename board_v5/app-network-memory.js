@@ -38,7 +38,7 @@ const state = {
   recordingTotalDuration: 0,
   recordingActiveIndex: -1,
   recordingSeekTarget: null,
-  networkStatus: { wifiConnected: false, apEnabled: false },
+  networkStatus: { wifiConnected: false, apEnabled: false, apiOnline: false },
   networkTrigger: null,
   networkCloseTimer: null,
 };
@@ -267,7 +267,7 @@ function setNetworkStatus(selector, message, kind = "idle") {
 function updateNetworkDot() {
   const dot = document.querySelector("#networkDot");
   if (!dot) return;
-  const online = state.networkStatus.wifiConnected || state.networkStatus.apEnabled;
+  const online = state.networkStatus.apiOnline || state.networkStatus.wifiConnected || state.networkStatus.apEnabled;
   dot.className = online ? "online" : "";
 }
 
@@ -1146,6 +1146,8 @@ async function refresh() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     state.apiOnline = true;
+    state.networkStatus.apiOnline = true;
+    updateNetworkDot();
     state.streams = new Map(data.streams.map((stream) => [stream.id, stream]));
     const main = data.streams.find((stream) => stream.quality === "main");
     const sub = data.streams.find((stream) => stream.quality === "sub");
@@ -1160,6 +1162,8 @@ async function refresh() {
     updateOverview();
   } catch (_error) {
     state.apiOnline = false;
+    state.networkStatus.apiOnline = false;
+    updateNetworkDot();
     updateOverview();
   } finally {
     window.setTimeout(refresh, 1000);
