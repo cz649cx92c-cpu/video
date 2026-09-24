@@ -113,22 +113,36 @@
             <div><dt>码率</dt><dd id="selectedBitrate">512 Kbps</dd></div>
           </dl>
 
-          <div class="quality-switch" role="group" aria-label="码流选择">
-            <div class="quality-option" data-quality="main">
-              <button class="quality-select" type="button" data-quality="main">主码流<small>720P · 25FPS</small></button>
-              <button class="quality-config" type="button" data-quality="main" aria-label="设置主码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+          <section class="inspector-section stream-section" aria-labelledby="streamSectionTitle">
+            <div class="section-heading">
+              <span id="streamSectionTitle">显示码流</span>
+              <small>选择预览质量</small>
             </div>
-            <div class="quality-option is-active" data-quality="sub">
-              <button class="quality-select" type="button" data-quality="sub">子码流<small>360P · 15FPS</small></button>
-              <button class="quality-config" type="button" data-quality="sub" aria-label="设置子码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+            <div class="quality-switch" role="group" aria-label="码流选择">
+              <div class="quality-option" data-quality="main">
+                <button class="quality-select" type="button" data-quality="main">主码流<small>720P · 25FPS</small></button>
+                <button class="quality-config" type="button" data-quality="main" aria-label="设置主码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+              </div>
+              <div class="quality-option is-active" data-quality="sub">
+                <button class="quality-select" type="button" data-quality="sub">子码流<small>360P · 15FPS</small></button>
+                <button class="quality-config" type="button" data-quality="sub" aria-label="设置子码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <div class="recording-row" id="recordingRow">
-            <span class="recording-state"><i id="recordingDot"></i><b>SD 卡录像</b><small id="recordingSummary">正在读取…</small></span>
-            <button class="recording-manage" id="recordingManage" type="button">管理</button>
-            <button class="recording-config" id="recordingConfig" type="button" aria-label="设置 SD 卡录像" aria-controls="recordingBody" aria-expanded="false">⚙</button>
-          </div>
+          <section class="inspector-section storage-section" aria-labelledby="storageSectionTitle">
+            <div class="section-heading">
+              <span id="storageSectionTitle">存储与录像</span>
+              <small>SD 卡持续记录</small>
+            </div>
+            <div class="recording-row" id="recordingRow">
+              <span class="recording-state"><i id="recordingDot"></i><b>SD 卡录像</b><small id="recordingSummary">正在读取…</small></span>
+              <div class="recording-actions">
+                <button class="recording-manage" id="recordingManage" type="button">查看录像</button>
+                <button class="recording-config" id="recordingConfig" type="button" aria-label="设置 SD 卡录像" aria-controls="recordingBody" aria-expanded="false">⚙</button>
+              </div>
+            </div>
+          </section>
 
           <div class="settings-backdrop" id="settingsBackdrop" hidden></div>
           <form class="quality-editor" id="settingsBody" role="dialog" aria-modal="true" aria-labelledby="editorTitle" hidden>
