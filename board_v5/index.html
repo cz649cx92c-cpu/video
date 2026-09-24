@@ -20,16 +20,6 @@
           <span class="brand-mark">RV</span>
           <span class="brand-copy"><strong>VISION</strong><small>CAMERA RECEIVER</small></span>
         </a>
-        <button class="network-trigger" id="networkTrigger" type="button" aria-label="网络设置" aria-controls="networkBody" aria-expanded="false">
-          <span class="network-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <path d="M3.4 9.1a13.5 13.5 0 0 1 17.2 0" />
-              <path d="M6.6 12.4a8.5 8.5 0 0 1 10.8 0" />
-              <path d="M9.7 15.7a3.6 3.6 0 0 1 4.6 0" />
-              <circle cx="12" cy="19" r="1.25" />
-            </svg>
-          </span><span>网络</span><i id="networkDot"></i>
-        </button>
         <div class="clock" aria-label="当前时间">
           <strong id="clock">--:--:--</strong><small id="date">----</small>
         </div>
@@ -74,6 +64,32 @@
         </form>
       </section>
 
+      <div class="settings-backdrop" id="settingsHubBackdrop" hidden></div>
+      <section class="quality-editor settings-hub" id="settingsHubBody" role="dialog" aria-modal="true" aria-labelledby="settingsHubTitle" hidden>
+        <div class="editor-head">
+          <span><b id="settingsHubTitle">设置</b><small>集中管理板端运行参数</small></span>
+          <button id="closeSettingsHub" type="button" aria-label="关闭设置">×</button>
+        </div>
+        <div class="settings-hub-layout">
+          <nav class="settings-nav" aria-label="设置分类">
+            <button class="settings-nav-item is-active" type="button" data-settings-hub-target="network" aria-selected="true">网络连接</button>
+            <button class="settings-nav-item" type="button" data-settings-hub-target="main" aria-selected="false">显示码流</button>
+            <button class="settings-nav-item" type="button" data-settings-hub-target="recording" aria-selected="false">存储与录像</button>
+          </nav>
+          <div class="settings-content">
+            <section class="settings-pane" data-settings-pane="network">
+              <h2>网络连接</h2><p id="hubNetworkSummary">Wi-Fi 与 AP 热点</p>
+            </section>
+            <section class="settings-pane" data-settings-pane="main" hidden>
+              <h2>显示码流</h2><p>统一调整主码流与子码流的清晰度、帧率和码率。</p>
+            </section>
+            <section class="settings-pane" data-settings-pane="recording" hidden>
+              <h2>存储与录像</h2><p id="hubRecordingSummary">SD 卡持续记录</p>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <div class="shell">
         <aside class="rail">
           <p class="eyebrow">画面范围</p>
@@ -82,8 +98,43 @@
             <button class="filter" data-filter="lower"><span>下层板</span><b id="countLower">0 / 4</b></button>
             <button class="filter" data-filter="upper"><span>上层板</span><b id="countUpper">0 / 4</b></button>
           </nav>
-
+          <div class="rail-controls">
+            <section class="rail-control-section stream-section" aria-labelledby="streamSectionTitle">
+              <div class="section-heading">
+                <span id="streamSectionTitle">显示码流</span>
+                <small>预览</small>
+              </div>
+              <div class="quality-switch" role="group" aria-label="码流选择">
+                <div class="quality-option" data-quality="main">
+                  <button class="quality-select" type="button" data-quality="main">主码流<small>720P · 25FPS</small></button>
+                  <button class="quality-config" type="button" data-quality="main" aria-label="设置主码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+                </div>
+                <div class="quality-option is-active" data-quality="sub">
+                  <button class="quality-select" type="button" data-quality="sub">子码流<small>360P · 15FPS</small></button>
+                  <button class="quality-config" type="button" data-quality="sub" aria-label="设置子码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
+                </div>
+              </div>
+            </section>
+            <section class="rail-control-section storage-section" aria-labelledby="storageSectionTitle">
+              <div class="section-heading">
+                <span id="storageSectionTitle">存储与录像</span>
+                <small>SD 卡</small>
+              </div>
+              <div class="recording-row" id="recordingRow">
+                <span class="recording-state"><i id="recordingDot"></i><b>SD 卡录像</b><small id="recordingSummary">正在读取…</small></span>
+                <div class="recording-actions">
+                  <button class="recording-manage" id="recordingManage" type="button">查看录像</button>
+                  <button class="recording-config" id="recordingConfig" type="button" aria-label="设置 SD 卡录像" aria-controls="recordingBody" aria-expanded="false">⚙</button>
+                </div>
+              </div>
+            </section>
+          </div>
           <div class="rail-spacer"></div>
+          <div class="rail-bottom">
+            <button class="network-trigger" id="networkTrigger" type="button" aria-label="设置" aria-controls="settingsHubBody" aria-expanded="false">
+              <span>设置</span><i id="networkDot"></i>
+            </button>
+          </div>
         </aside>
 
         <main class="stage">
@@ -100,41 +151,6 @@
         </main>
 
         <aside class="inspector">
-          <p class="eyebrow">当前通道</p>
-          <div class="channel-number"><span id="selectedBoard">下层板</span><strong id="selectedChannel">01</strong></div>
-          <div class="signal-line"><i id="selectedDot"></i><span id="selectedState">等待信号</span></div>
-
-          <section class="inspector-section stream-section" aria-labelledby="streamSectionTitle">
-            <div class="section-heading">
-              <span id="streamSectionTitle">显示码流</span>
-              <small>选择预览质量</small>
-            </div>
-            <div class="quality-switch" role="group" aria-label="码流选择">
-              <div class="quality-option" data-quality="main">
-                <button class="quality-select" type="button" data-quality="main">主码流<small>720P · 25FPS</small></button>
-                <button class="quality-config" type="button" data-quality="main" aria-label="设置主码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
-              </div>
-              <div class="quality-option is-active" data-quality="sub">
-                <button class="quality-select" type="button" data-quality="sub">子码流<small>360P · 15FPS</small></button>
-                <button class="quality-config" type="button" data-quality="sub" aria-label="设置子码流" aria-controls="settingsBody" aria-expanded="false">⚙</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="inspector-section storage-section" aria-labelledby="storageSectionTitle">
-            <div class="section-heading">
-              <span id="storageSectionTitle">存储与录像</span>
-              <small>SD 卡持续记录</small>
-            </div>
-            <div class="recording-row" id="recordingRow">
-              <span class="recording-state"><i id="recordingDot"></i><b>SD 卡录像</b><small id="recordingSummary">正在读取…</small></span>
-              <div class="recording-actions">
-                <button class="recording-manage" id="recordingManage" type="button">查看录像</button>
-                <button class="recording-config" id="recordingConfig" type="button" aria-label="设置 SD 卡录像" aria-controls="recordingBody" aria-expanded="false">⚙</button>
-              </div>
-            </div>
-          </section>
-
           <div class="settings-backdrop" id="settingsBackdrop" hidden></div>
           <form class="quality-editor" id="settingsBody" role="dialog" aria-modal="true" aria-labelledby="editorTitle" hidden>
             <div class="editor-head">

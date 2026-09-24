@@ -44,10 +44,34 @@ const state = {
   networkStatus: { wifiConnected: false, apEnabled: false, apiOnline: false },
   networkTrigger: null,
   networkCloseTimer: null,
+  settingsHubTrigger: null,
+  settingsHubCloseTimer: null,
+  settingsPanel: "network",
 };
 
 const grid = document.querySelector("#videoGrid");
-const inspector = document.querySelector(".inspector");
+
+function mountInlineSettings() {
+  const destinations = {
+    "#networkBody": document.querySelector('[data-settings-pane="network"]'),
+    "#settingsBody": document.querySelector('[data-settings-pane="main"]'),
+    "#recordingBody": document.querySelector('[data-settings-pane="recording"]'),
+  };
+  for (const [selector, destination] of Object.entries(destinations)) {
+    const panel = document.querySelector(selector);
+    if (!panel || !destination) continue;
+    destination.appendChild(panel);
+    panel.hidden = false;
+    panel.dataset.inline = "true";
+    panel.classList.add("settings-inline-form");
+    panel.querySelector(".editor-head")?.setAttribute("hidden", "true");
+  }
+  document.querySelectorAll('#settingsBody fieldset[data-profile]').forEach((fieldset) => {
+    fieldset.hidden = false;
+  });
+}
+
+mountInlineSettings();
 
 function renderFeeds() {
   grid.innerHTML = cameraDefs.map((camera) => `
@@ -84,7 +108,7 @@ function selectCamera(cameraId) {
   state.selected = cameraId;
   grid.querySelectorAll(".feed").forEach((feed) => feed.classList.toggle("is-selected", feed.dataset.camera === cameraId));
   updateInspector();
-  if (window.innerWidth <= 1000) inspector.classList.add("is-open");
+  if (window.innerWidth <= 1000) document.querySelector(".rail-controls")?.classList.add("is-open");
 }
 
 function setQuality(cameraId, quality) {
@@ -203,12 +227,6 @@ function stopPlayer(cameraId) {
 function updateInspector() {
   const camera = cameraDefs.find((item) => item.id === state.selected) || cameraDefs[0];
   const requestedQuality = state.quality.get(camera.id) || "sub";
-  const stream = streamFor(camera.id, requestedQuality);
-  document.querySelector("#selectedBoard").textContent = camera.boardName;
-  document.querySelector("#selectedChannel").textContent = String(camera.channel).padStart(2, "0");
-  document.querySelector("#selectedState").textContent = statusText(stream?.state);
-  const dot = document.querySelector("#selectedDot");
-  dot.className = stream?.state === "online" ? "online" : (stream?.state === "offline" || stream?.state === "error" ? "offline" : "");
   document.querySelectorAll(".quality-option").forEach((option) => option.classList.toggle("is-active", option.dataset.quality === requestedQuality));
   updateQualityLabels();
 }
@@ -255,6 +273,8 @@ function updateNetworkDot() {
   if (!dot) return;
   const online = state.networkStatus.apiOnline || state.networkStatus.wifiConnected || state.networkStatus.apEnabled;
   dot.className = online ? "online" : "";
+  const summary = document.querySelector("#hubNetworkSummary");
+  if (summary) summary.textContent = online ? "网络已连接 · Wi-Fi / AP 可配置" : "网络未连接 · Wi-Fi / AP 可配置";
 }
 
 async function refreshNetworkIndicator() {
@@ -375,9 +395,86 @@ async function scanWifi() {
   }
 }
 
+function dismissSettingsHub() {
+  const panel = document.querySelector("#settingsHubBody");
+  const backdrop = document.querySelector("#settingsHubBackdrop");
+  window.clearTimeout(state.settingsHubCloseTimer);
+  panel.classList.remove("is-open");
+  backdrop.classList.remove("is-open");
+  panel.hidden = true;
+  backdrop.hidden = true;
+  document.querySelector("#networkTrigger").setAttribute("aria-expanded", "false");
+  state.settingsHubTrigger = null;
+}
+
+function closeSettingsHub({ restoreFocus = true } = {}) {
+  const panel = document.querySelector("#settingsHubBody");
+  const backdrop = document.querySelector("#settingsHubBackdrop");
+  if (panel.hidden) return;
+  window.clearTimeout(state.settingsHubCloseTimer);
+  panel.classList.remove("is-open");
+  backdrop.classList.remove("is-open");
+  const focusTarget = state.settingsHubTrigger;
+  state.settingsHubCloseTimer = window.setTimeout(() => {
+    panel.hidden = true;
+    backdrop.hidden = true;
+    if (restoreFocus) focusTarget?.focus();
+    state.settingsHubTrigger = null;
+  }, 190);
+}
+
+function selectSettingsPanel(target) {
+  const panel = ["network", "main", "recording"].includes(target) ? target : "network";
+  state.settingsPanel = panel;
+  document.querySelectorAll("[data-settings-hub-target]").forEach((button) => {
+    const active = button.dataset.settingsHubTarget === panel;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-settings-pane]").forEach((pane) => {
+    pane.hidden = pane.dataset.settingsPane !== panel;
+  });
+  if (panel === "network") {
+    Promise.all([loadWifiStatus(), loadApStatus()]);
+  } else if (panel === "main") {
+    loadSettings();
+  } else {
+    loadRecording();
+  }
+}
+
+function openSettingsHubTarget(target) {
+  selectSettingsPanel(target);
+}
+
+function toggleSettingsHub(trigger) {
+  const panel = document.querySelector("#settingsHubBody");
+  const backdrop = document.querySelector("#settingsHubBackdrop");
+  if (!panel.hidden) {
+    closeSettingsHub();
+    return;
+  }
+  closeRecordings({ restoreFocus: false });
+  window.clearTimeout(state.settingsHubCloseTimer);
+  state.settingsHubTrigger = trigger;
+  panel.hidden = false;
+  backdrop.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  selectSettingsPanel("network");
+  updateNetworkDot();
+  const recordingSummary = document.querySelector("#recordingSummary")?.textContent;
+  const hubRecordingSummary = document.querySelector("#hubRecordingSummary");
+  if (hubRecordingSummary && recordingSummary) hubRecordingSummary.textContent = recordingSummary;
+  window.requestAnimationFrame(() => {
+    panel.classList.add("is-open");
+    backdrop.classList.add("is-open");
+  });
+}
+
 function closeNetwork({ restoreFocus = true } = {}) {
   const panel = document.querySelector("#networkBody");
   const backdrop = document.querySelector("#networkBackdrop");
+  if (panel.dataset.inline === "true") return;
   if (panel.hidden) return;
   window.clearTimeout(state.networkCloseTimer);
   panel.classList.remove("is-open");
@@ -473,6 +570,7 @@ function placeSettings(trigger) {
 function closeSettings({ restoreFocus = true } = {}) {
   const form = document.querySelector("#settingsBody");
   const backdrop = document.querySelector("#settingsBackdrop");
+  if (form.dataset.inline === "true") return;
   if (form.hidden) return;
   window.clearTimeout(state.settingsCloseTimer);
   window.clearTimeout(state.settingsAutoCloseTimer);
@@ -649,6 +747,8 @@ function updateRecordingUi(data) {
   document.querySelector("#recordingSummary").textContent = active
     ? `${data.recording_cameras || 0} 路录像 · ${data.segment_seconds} 秒分片`
     : (data.enabled ? "SD 卡不可用" : "已停止");
+  const hubRecordingSummary = document.querySelector("#hubRecordingSummary");
+  if (hubRecordingSummary) hubRecordingSummary.textContent = document.querySelector("#recordingSummary").textContent;
   document.querySelector("#recordProfile").textContent = `${recordingProfileText(data)}；清晰度、帧率和码率可通过对应码流齿轮调整。`;
   const storage = data.storage;
   if (storage) {
@@ -679,6 +779,7 @@ function setRecordingStatus(message, kind = "idle") {
 function closeRecording({ restoreFocus = true } = {}) {
   const form = document.querySelector("#recordingBody");
   const backdrop = document.querySelector("#recordingBackdrop");
+  if (form.dataset.inline === "true") return;
   if (form.hidden) return;
   window.clearTimeout(state.recordingCloseTimer);
   form.classList.remove("is-open");
@@ -1364,8 +1465,13 @@ document.querySelectorAll(".quality-config").forEach((button) => button.addEvent
 }));
 document.querySelector("#networkTrigger").addEventListener("click", (event) => {
   event.preventDefault();
-  toggleNetwork(event.currentTarget);
+  toggleSettingsHub(event.currentTarget);
 });
+document.querySelector("#closeSettingsHub").addEventListener("click", closeSettingsHub);
+document.querySelector("#settingsHubBackdrop").addEventListener("click", closeSettingsHub);
+document.querySelectorAll("[data-settings-hub-target]").forEach((button) => button.addEventListener("click", () => {
+  openSettingsHubTarget(button.dataset.settingsHubTarget);
+}));
 document.querySelector("#closeNetwork").addEventListener("click", closeNetwork);
 document.querySelector("#networkBackdrop").addEventListener("click", closeNetwork);
 document.querySelectorAll(".network-tab").forEach((button) => button.addEventListener("click", () => setNetworkTab(button.dataset.networkTab)));
@@ -1433,9 +1539,10 @@ document.querySelector("#recordingBody").addEventListener("keydown", (event) => 
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!document.querySelector("#networkBody").hidden) closeNetwork();
-  else if (!document.querySelector("#settingsBody").hidden) closeSettings();
-  else if (!document.querySelector("#recordingBody").hidden) closeRecording();
+  if (!document.querySelector("#settingsHubBody").hidden) closeSettingsHub();
+  else if (document.querySelector("#networkBody").dataset.inline !== "true" && !document.querySelector("#networkBody").hidden) closeNetwork();
+  else if (document.querySelector("#settingsBody").dataset.inline !== "true" && !document.querySelector("#settingsBody").hidden) closeSettings();
+  else if (document.querySelector("#recordingBody").dataset.inline !== "true" && !document.querySelector("#recordingBody").hidden) closeRecording();
   else if (!document.querySelector("#recordingsBody").hidden) closeRecordings();
 });
 window.addEventListener("resize", () => {
