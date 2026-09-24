@@ -12,7 +12,6 @@ const cameraDefs = [
 const state = {
   selected: "lower-ch1",
   filter: "all",
-  focused: false,
   streams: new Map(),
   quality: new Map(cameraDefs.map((camera) => [camera.id, "sub"])),
   players: new Map(),
@@ -71,7 +70,6 @@ function renderFeeds() {
 
   grid.querySelectorAll(".feed").forEach((feed) => {
     feed.addEventListener("click", () => selectCamera(feed.dataset.camera));
-    feed.addEventListener("dblclick", () => toggleFocus(feed.dataset.camera));
     feed.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") selectCamera(feed.dataset.camera);
     });
@@ -87,15 +85,6 @@ function selectCamera(cameraId) {
   grid.querySelectorAll(".feed").forEach((feed) => feed.classList.toggle("is-selected", feed.dataset.camera === cameraId));
   updateInspector();
   if (window.innerWidth <= 1000) inspector.classList.add("is-open");
-}
-
-function toggleFocus(cameraId = state.selected) {
-  if (cameraId !== state.selected) selectCamera(cameraId);
-  state.focused = !state.focused;
-  grid.classList.toggle("is-focus", state.focused);
-  document.body.classList.toggle("focus-layout", state.focused);
-  document.querySelector("#exitFocus").hidden = !state.focused;
-  document.querySelector("#focusAction span").textContent = state.focused ? "返回视频墙" : "聚焦查看";
 }
 
 function setQuality(cameraId, quality) {
@@ -215,15 +204,8 @@ function updateInspector() {
   const camera = cameraDefs.find((item) => item.id === state.selected) || cameraDefs[0];
   const requestedQuality = state.quality.get(camera.id) || "sub";
   const stream = streamFor(camera.id, requestedQuality);
-  const decoder = state.decoder.get(camera.id);
-
   document.querySelector("#selectedBoard").textContent = camera.boardName;
   document.querySelector("#selectedChannel").textContent = String(camera.channel).padStart(2, "0");
-  document.querySelector("#selectedDevice").textContent = camera.device;
-  document.querySelector("#selectedQuality").textContent = requestedQuality.toUpperCase();
-  document.querySelector("#selectedResolution").textContent = stream?.resolution || (requestedQuality === "main" ? "1280 × 720" : "640 × 360");
-  document.querySelector("#selectedFps").textContent = decoder?.fps ? `${decoder.fps} FPS` : `${stream?.expected_fps || (requestedQuality === "main" ? 25 : 15)} FPS`;
-  document.querySelector("#selectedBitrate").textContent = `${stream?.bitrate_kbps || configFor(requestedQuality).bitrate_kbps} Kbps`;
   document.querySelector("#selectedState").textContent = statusText(stream?.state);
   const dot = document.querySelector("#selectedDot");
   dot.className = stream?.state === "online" ? "online" : (stream?.state === "offline" || stream?.state === "error" ? "offline" : "");
@@ -835,13 +817,29 @@ function recordingFileUrl(file = {}) {
   return `/api/recording/file?camera=${encodeURIComponent(file.camera)}&name=${encodeURIComponent(file.name)}`;
 }
 
-function recordingMatchesFilter(file) {
-  if (!state.recordingFilterDate) return true;
-  const date = new Date(Number(file.modified_epoch || 0) * 1000);
-  if (!Number.isFinite(date.getTime())) return false;
-  const localDate = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+function localDateValue(date = new Date()) {
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
     .map((value) => String(value).padStart(2, "0"))
     .join("-");
+}
+
+function syncRecordingDateLimit() {
+  const input = document.querySelector("#recordingsDateFilter");
+  if (!input) return;
+  const today = localDateValue();
+  input.max = today;
+  if (input.value && input.value > today) {
+    input.value = today;
+    state.recordingFilterDate = today;
+  }
+}
+
+function recordingMatchesFilter(file) {
+  const date = new Date(Number(file.modified_epoch || 0) * 1000);
+  if (!Number.isFinite(date.getTime())) return !state.recordingFilterDate;
+  const localDate = localDateValue(date);
+  if (localDate > localDateValue()) return false;
+  if (!state.recordingFilterDate) return true;
   return localDate === state.recordingFilterDate;
 }
 
@@ -1124,6 +1122,7 @@ async function toggleRecordings(trigger) {
   }
   closeSettings({ restoreFocus: false });
   closeRecording({ restoreFocus: false });
+  syncRecordingDateLimit();
   state.recordingsTrigger = trigger;
   form.hidden = false;
   backdrop.hidden = false;
@@ -1147,7 +1146,10 @@ document.querySelector("#refreshRecordings").addEventListener("click", loadRecor
 document.querySelector("#recordingsCamera").addEventListener("change", loadRecordings);
 document.querySelector("#moreRecordings").addEventListener("click", () => loadRecordings({ append: true }));
 document.querySelector("#recordingsDateFilter").addEventListener("input", (event) => {
-  state.recordingFilterDate = event.currentTarget.value;
+  const today = localDateValue();
+  event.currentTarget.max = today;
+  state.recordingFilterDate = event.currentTarget.value > today ? today : event.currentTarget.value;
+  event.currentTarget.value = state.recordingFilterDate;
   applyRecordingFilter();
 });
 document.querySelector("#clearRecordingFilter").addEventListener("click", () => {
@@ -1360,8 +1362,6 @@ document.querySelectorAll(".quality-config").forEach((button) => button.addEvent
   event.stopPropagation();
   toggleSettings(button.dataset.quality, button);
 }));
-document.querySelector("#focusAction").addEventListener("click", () => toggleFocus());
-document.querySelector("#exitFocus").addEventListener("click", () => toggleFocus());
 document.querySelector("#networkTrigger").addEventListener("click", (event) => {
   event.preventDefault();
   toggleNetwork(event.currentTarget);
@@ -1437,7 +1437,6 @@ document.addEventListener("keydown", (event) => {
   else if (!document.querySelector("#settingsBody").hidden) closeSettings();
   else if (!document.querySelector("#recordingBody").hidden) closeRecording();
   else if (!document.querySelector("#recordingsBody").hidden) closeRecordings();
-  else if (state.focused) toggleFocus();
 });
 window.addEventListener("resize", () => {
   if (state.settingsTrigger && !document.querySelector("#settingsBody").hidden) placeSettings(state.settingsTrigger);

@@ -94,7 +94,6 @@
             </div>
             <div class="stage-actions">
               <button class="text-button" id="qualityAll" type="button" data-target="main">切换成主码流</button>
-              <button class="icon-button" id="exitFocus" type="button" hidden aria-label="退出聚焦">×</button>
             </div>
           </div>
           <section class="video-grid" id="videoGrid" aria-live="polite"></section>
@@ -104,14 +103,6 @@
           <p class="eyebrow">当前通道</p>
           <div class="channel-number"><span id="selectedBoard">下层板</span><strong id="selectedChannel">01</strong></div>
           <div class="signal-line"><i id="selectedDot"></i><span id="selectedState">等待信号</span></div>
-
-          <dl class="facts">
-            <div><dt>设备节点</dt><dd id="selectedDevice">/dev/video1</dd></div>
-            <div><dt>显示码流</dt><dd id="selectedQuality">SUB</dd></div>
-            <div><dt>分辨率</dt><dd id="selectedResolution">640 × 360</dd></div>
-            <div><dt>帧率</dt><dd id="selectedFps">15 FPS</dd></div>
-            <div><dt>码率</dt><dd id="selectedBitrate">512 Kbps</dd></div>
-          </dl>
 
           <section class="inspector-section stream-section" aria-labelledby="streamSectionTitle">
             <div class="section-heading">
@@ -271,11 +262,6 @@
             <button class="records-more" id="moreRecordings" type="button" hidden>加载更早录像</button>
             <p class="recordings-status" id="recordingsStatus" role="status">正在读取录像目录…</p>
           </section>
-
-          <button class="focus-action" id="focusAction" type="button">
-            <span>聚焦查看</span><b>↗</b>
-          </button>
-          <p class="hint">双击任意画面也可以进入或退出聚焦模式。</p>
 
         </aside>
       </div>

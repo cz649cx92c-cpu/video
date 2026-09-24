@@ -111,13 +111,6 @@ button { color: inherit; }
 .feed-empty i::after { width: 1px; height: 12px; left: 16px; top: 10px; }
 .feed-empty span { font-size: 8px; letter-spacing: .16em; }
 
-.video-grid.is-focus { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.video-grid.is-focus .feed:not(.is-selected) { display: none; }
-.video-grid.is-focus .feed { display: grid; place-items: center; background: #141815; }
-.video-grid.is-focus .feed video { object-fit: contain; }
-.video-grid.is-focus .feed-meta { padding: 17px 18px; }
-.video-grid.is-focus .feed-title { font-size: 12px; }
-
 .channel-number { display: flex; align-items: end; justify-content: space-between; margin-top: 18px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
 .channel-number span { color: var(--muted); font-size: 11px; }
 .channel-number strong { font-size: 52px; line-height: .8; font-weight: 350; letter-spacing: -.07em; }
@@ -125,10 +118,6 @@ button { color: inherit; }
 .signal-line i { width: 6px; height: 6px; border-radius: 50%; background: #aab2ad; }
 .signal-line i.online { background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
 .signal-line i.offline { background: var(--danger); }
-.facts { margin: 0; }
-.facts div { display: flex; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--line); }
-.facts dt { color: var(--muted); font-size: 9px; }
-.facts dd { margin: 0; font-size: 10px; font-variant-numeric: tabular-nums; }
 .quality-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 24px; }
 .quality-option { position: relative; min-width: 0; border: 1px solid var(--line); background: transparent; transition: background .2s, border-color .2s, box-shadow .2s; }
 .quality-option:hover { border-color: var(--line-strong); }
@@ -155,11 +144,6 @@ button { color: inherit; }
 .recording-manage { margin-left: auto; padding: 5px 8px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 8px; cursor: pointer; transition: color .2s, border-color .2s, background .2s; }
 .recording-manage:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 @keyframes record-pulse { 50% { box-shadow: 0 0 0 7px rgba(46,139,87,0); } }
-.focus-action { display: flex; justify-content: space-between; width: 100%; margin-top: 10px; padding: 13px 14px; border: 0; background: var(--accent); color: #fff; font-size: 10px; font-weight: 650; cursor: pointer; transition: background .2s, transform .2s; }
-.focus-action:hover { background: #247648; transform: translateY(-1px); }
-.focus-action b { font-size: 13px; }
-.hint { margin: 12px 1px 0; color: #59615d; font-size: 8px; line-height: 1.6; }
-
 .settings-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(22,35,27,.09); opacity: 0; backdrop-filter: blur(1px); transition: opacity .19s ease; }
 .settings-backdrop.is-open { opacity: 1; }
 .settings-backdrop[hidden] { display: none; }
@@ -653,9 +637,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .channel-number strong { font-size: 64px; font-weight: 320; }
 .signal-line { gap: 10px; padding: 16px 0 20px; font-size: 11px; }
 .signal-line i { width: 7px; height: 7px; }
-.facts div { padding: 13px 0; border-bottom-color: rgba(24,43,32,.1); }
-.facts dt { color: #7a887f; font-size: 10px; }
-.facts dd { font-size: 11px; font-weight: 600; }
 .quality-switch { gap: 8px; margin-top: 26px; }
 .quality-option { border-color: rgba(24,43,32,.13); border-radius: 10px; background: #fff; overflow: hidden; }
 .quality-option:hover { border-color: rgba(36,123,75,.28); box-shadow: var(--shadow-sm); }
@@ -687,17 +668,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .recording-manage:hover { border-color: rgba(36,123,75,.4); background: var(--accent-soft); color: var(--accent); }
 .recording-config { border-radius: 7px; }
-.focus-action {
-  margin-top: 14px;
-  padding: 14px 15px;
-  border-radius: 10px;
-  background: var(--accent);
-  box-shadow: 0 8px 18px rgba(36,123,75,.18);
-  font-size: 11px;
-}
-.focus-action:hover { background: #1c683f; box-shadow: 0 10px 22px rgba(36,123,75,.25); }
-.hint { margin-top: 13px; color: #7a887f; font-size: 9px; }
-
 .settings-backdrop.is-open { background: rgba(17,31,23,.28); backdrop-filter: blur(5px); }
 .quality-editor {
   gap: 16px;
@@ -814,8 +784,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .recording-manage { margin-left: 0; padding: 7px 10px; border-color: var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; }
 .recording-manage:hover { border-color: #247648; background: #247648; color: #fff; }
 .recording-config { width: 30px; height: 30px; border-radius: 7px; }
-.focus-action { margin-top: clamp(12px, 1.8vh, 18px); }
-
 @media (min-width: 1450px) {
   .shell { grid-template-columns: minmax(196px, 13.5vw) minmax(0, 1fr) minmax(306px, 18.5vw); }
   .video-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
