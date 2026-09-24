@@ -39,6 +39,7 @@ const state = {
   recordingDurations: [],
   recordingOffsets: [],
   recordingTotalDuration: 0,
+  recordingTimelineStartEpoch: 0,
   recordingActiveIndex: -1,
   recordingSeekTarget: null,
   networkStatus: { wifiConnected: false, apEnabled: false, apiOnline: false },
@@ -809,6 +810,25 @@ function formatRecordingTime(epoch) {
   });
 }
 
+function recordingStartEpoch(file = {}) {
+  const match = String(file.name || "").match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (match) {
+    const [, year, month, day, hour, minute, second] = match;
+    return Math.floor(new Date(
+      Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second),
+    ).getTime() / 1000);
+  }
+  return Number(file.modified_epoch || 0);
+}
+
+function formatRecordingTimelineTime(epoch) {
+  const date = new Date(Number(epoch) * 1000);
+  if (!Number.isFinite(date.getTime())) return "--/-- --:--:--";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
 function recordingFileUrl(file = {}) {
   if (file.url) return file.url;
   if (!file.camera || !file.name) return "";
@@ -924,10 +944,16 @@ function setRecordingPlaybackStatus(text, kind = "") {
 
 function updateRecordingTimelinePosition(position = null) {
   const scrubber = document.querySelector("#recordingScrubber");
-  const current = position == null ? Number(scrubber.value || 0) : Number(position);
-  document.querySelector("#recordingCurrentTime").textContent = formatRecordingDuration(current);
-  document.querySelector("#recordingTotalTime").textContent = formatRecordingDuration(state.recordingTotalDuration);
-  if (position != null && !scrubber.matches(":active")) scrubber.value = String(Math.max(0, Math.min(state.recordingTotalDuration, current)));
+  const minimum = Number(scrubber.min || 0);
+  const current = Math.max(minimum, Math.min(state.recordingTotalDuration, position == null ? Number(scrubber.value || 0) : Number(position)));
+  const startEpoch = state.recordingTimelineStartEpoch;
+  document.querySelector("#recordingCurrentTime").textContent = startEpoch
+    ? formatRecordingTimelineTime(startEpoch + current)
+    : formatRecordingDuration(current);
+  document.querySelector("#recordingTotalTime").textContent = startEpoch
+    ? formatRecordingTimelineTime(startEpoch + state.recordingTotalDuration)
+    : formatRecordingDuration(state.recordingTotalDuration);
+  if (position != null && !scrubber.matches(":active")) scrubber.value = String(current);
 }
 
 function resetRecordingTimeline(message = "请选择单个摄像头读取录像时间轴") {
@@ -936,6 +962,7 @@ function resetRecordingTimeline(message = "请选择单个摄像头读取录像�
   state.recordingDurations = [];
   state.recordingOffsets = [];
   state.recordingTotalDuration = 0;
+  state.recordingTimelineStartEpoch = 0;
   state.recordingActiveIndex = -1;
   state.recordingSeekTarget = null;
   const player = document.querySelector("#recordingPlayer");
@@ -961,7 +988,11 @@ function rebuildRecordingOffsets() {
   });
   state.recordingOffsets = offsets;
   state.recordingTotalDuration = total;
+  state.recordingTimelineStartEpoch = state.recordingPlaylist.length
+    ? recordingStartEpoch(state.recordingPlaylist[0])
+    : 0;
   const scrubber = document.querySelector("#recordingScrubber");
+  scrubber.min = "0";
   scrubber.max = String(total);
   updateRecordingTimelinePosition();
 }
@@ -993,7 +1024,7 @@ async function loadRecordingSegment(index, offset = 0, autoplay = false) {
   preview.pause();
   preview.src = url;
   preview.load();
-  setRecordingPlaybackStatus(`${formatRecordingTime(file.modified_epoch)} · 已封存录像`);
+  setRecordingPlaybackStatus(`${formatRecordingTimelineTime(recordingStartEpoch(file))} · 已封存录像`);
 }
 
 async function loadRecordingTimeline(camera, firstPage, token) {
@@ -1020,7 +1051,9 @@ async function loadRecordingTimeline(camera, firstPage, token) {
     setRecordingPlaybackStatus("当前摄像头没有已封存录像");
     return;
   }
-  await loadRecordingSegment(state.recordingPlaylist.length - 1, 0, false);
+  // Start with the newest finalized segment so opening the manager immediately
+  // shows a real frame instead of leaving the player parked at 0:00.
+  await loadRecordingSegment(state.recordingPlaylist.length - 1, 0, true);
 
   try {
     for (let offset = 100; offset < total; offset += 100) {
@@ -1145,7 +1178,10 @@ document.querySelector("#recordingScrubber").addEventListener("input", (event) =
   if (index < 0) return;
   const offset = recordingFileOffset(index, position);
   state.recordingSeekTarget = { offset, autoplay: !document.querySelector("#recordingPreview").paused };
-  setRecordingPlaybackStatus(`定位到 ${formatRecordingDuration(position)} · 正在切换录像段`);
+  const timelineTime = state.recordingTimelineStartEpoch
+    ? formatRecordingTimelineTime(state.recordingTimelineStartEpoch + position)
+    : formatRecordingDuration(position);
+  setRecordingPlaybackStatus(`定位到 ${timelineTime} · 正在切换录像段`);
 });
 
 document.querySelector("#recordingScrubber").addEventListener("change", (event) => {
@@ -1181,8 +1217,47 @@ document.querySelector("#recordingPreview").addEventListener("ended", () => {
   if (nextIndex < state.recordingPlaylist.length) loadRecordingSegment(nextIndex, 0, true);
 });
 
+async function recoverRecordingPreviewError() {
+  const preview = document.querySelector("#recordingPreview");
+  if (preview.dataset.recovering === "1") return;
+  const file = state.recordingPlaylist[state.recordingActiveIndex];
+  if (!file) {
+    setRecordingPlaybackStatus("没有可播放的录像段", "error");
+    return;
+  }
+  preview.dataset.recovering = "1";
+  let missing = false;
+  try {
+    const response = await fetch(recordingFileUrl(file), {
+      cache: "no-store",
+      headers: { Range: "bytes=0-1" },
+    });
+    missing = response.status === 404 || response.status === 410;
+  } catch (_error) {}
+  if (!missing) {
+    delete preview.dataset.recovering;
+    setRecordingPlaybackStatus("录像段读取失败，请稍后重试", "error");
+    return;
+  }
+
+  const failedIndex = state.recordingActiveIndex;
+  state.recordingTimelineFiles = state.recordingTimelineFiles.filter((item) => item.name !== file.name);
+  state.recordingFiles = state.recordingFiles.filter((item) => item.name !== file.name);
+  state.recordingActiveIndex = -1;
+  renderRecordings({ files: state.recordingFiles });
+  rebuildRecordingPlaylist();
+  const nextIndex = Math.min(failedIndex, state.recordingPlaylist.length - 1);
+  delete preview.dataset.recovering;
+  if (nextIndex >= 0) {
+    setRecordingPlaybackStatus("最旧录像已被存储清理，已跳到最早可读片段", "loading");
+    await loadRecordingSegment(nextIndex, 0, true);
+  } else {
+    resetRecordingTimeline("录像已被存储清理");
+  }
+}
+
 document.querySelector("#recordingPreview").addEventListener("error", () => {
-  setRecordingPlaybackStatus("录像段读取失败，可能已被存储清理", "error");
+  recoverRecordingPreviewError();
 });
 
 function updateOverview() {
