@@ -942,6 +942,18 @@ function setRecordingPlaybackStatus(text, kind = "") {
   status.dataset.kind = kind;
 }
 
+function updateRecordingScrubberFill(value = null) {
+  const scrubber = document.querySelector("#recordingScrubber");
+  if (!scrubber) return;
+  const minimum = Number(scrubber.min || 0);
+  const maximum = Number(scrubber.max || 0);
+  const current = Number(value == null ? scrubber.value : value);
+  const ratio = maximum > minimum
+    ? Math.max(0, Math.min(1, (current - minimum) / (maximum - minimum)))
+    : 0;
+  scrubber.style.setProperty("--recording-progress", `${(ratio * 100).toFixed(3)}%`);
+}
+
 function updateRecordingTimelinePosition(position = null) {
   const scrubber = document.querySelector("#recordingScrubber");
   const minimum = Number(scrubber.min || 0);
@@ -954,6 +966,7 @@ function updateRecordingTimelinePosition(position = null) {
     ? formatRecordingTimelineTime(startEpoch + state.recordingTotalDuration)
     : formatRecordingDuration(state.recordingTotalDuration);
   if (position != null && !scrubber.matches(":active")) scrubber.value = String(current);
+  updateRecordingScrubberFill(current);
 }
 
 function resetRecordingTimeline(message = "请选择单个摄像头读取录像时间轴") {
