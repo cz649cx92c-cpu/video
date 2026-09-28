@@ -6,6 +6,10 @@
 
 PATH=/usr/sbin:/usr/bin:/sbin:/bin:/userdata:$PATH
 export PATH
+# The board image has no /etc/localtime. Keep recorder filenames, web logs,
+# and the boot-time recovery logic on the same China-local clock explicitly.
+TZ=CST-8
+export TZ
 
 LOG=/userdata/rv1126b-autostart.log
 AP_MANAGER=/userdata/ap_manager
@@ -14,6 +18,12 @@ MEDIAMTX=/userdata/mediamtx
 MEDIAMTX_CONFIG=/userdata/mediamtx-rv1126b.yml
 VIDEO_BIN=/videotuiliu/bin/videotuiliu
 VIDEO_LOG=/videotuiliu/logs/videotuiliu-autostart.log
+CLOCK_STATE=/userdata/rv1126b-clock.state
+# Do not accept an uninitialised RTC or a malformed/far-future SD filename.
+CLOCK_MIN_EPOCH=1577836800
+# Permit long offline periods while still rejecting an obviously corrupt
+# filename (for example a year far beyond the valid RTC/state clock).
+CLOCK_MAX_RECORDING_AHEAD=31622400
 RKWIFI_SERVER=
 
 if command -v rkwifi_server >/dev/null 2>&1; then
@@ -31,10 +41,44 @@ log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
 }
 
-restore_clock_from_recordings() {
-    year=$(date -u '+%Y' 2>/dev/null)
-    [ -n "$year" ] && [ "$year" -ge 2025 ] 2>/dev/null && return 0
+is_valid_epoch() {
+    value="$1"
+    case "$value" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$value" -ge "$CLOCK_MIN_EPOCH" ] 2>/dev/null
+}
 
+save_clock_state() {
+    epoch="$1"
+    is_valid_epoch "$epoch" || return 0
+    tmp="${CLOCK_STATE}.tmp"
+    if printf '%s\n' "$epoch" > "$tmp" 2>/dev/null && mv -f "$tmp" "$CLOCK_STATE" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+    log "failed to persist clock state"
+}
+
+set_clock_forward() {
+    source="$1"
+    candidate="$2"
+    is_valid_epoch "$candidate" || return 0
+    current=$(date -u '+%s' 2>/dev/null)
+    if is_valid_epoch "$current" && [ "$current" -ge "$candidate" ]; then
+        return 0
+    fi
+    if date -u -s "@$candidate" >/dev/null 2>&1; then
+        # Keep the hardware RTC in UTC; BusyBox otherwise treats it as local time.
+        hwclock -w -u >/dev/null 2>&1 || true
+        save_clock_state "$candidate"
+        log "clock advanced from $source: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    else
+        log "clock advance failed from $source: $candidate"
+    fi
+}
+
+restore_clock_from_recordings() {
     latest=$(find /mnt/sdcard/recordings -type f -name '*.mp4' 2>/dev/null \
         | sed 's#.*/##' \
         | sed -n 's/^\([0-9]\{8\}\)_\([0-9]\{6\}\).*/\1 \2/p' \
@@ -56,11 +100,49 @@ restore_clock_from_recordings() {
     local_epoch=$(date -u -d "$stamp" '+%s' 2>/dev/null)
     [ -n "$local_epoch" ] || return 0
     utc_epoch=$((local_epoch - 28800))
-    if date -u -s "@$utc_epoch" >/dev/null 2>&1; then
-        log "clock restored from latest recording: $stamp Asia/Shanghai"
-        hwclock -w >/dev/null 2>&1 || true
+    current_epoch=$(date -u '+%s' 2>/dev/null)
+    is_valid_epoch "$utc_epoch" || return 0
+    # A completed .mp4 is renamed atomically by the recorder, so it is safe as
+    # a fallback. Reject an obviously corrupt filename, but allow the normal
+    # one-day China-local/UTC boundary after a cold boot.
+    if is_valid_epoch "$current_epoch" && [ "$utc_epoch" -gt $((current_epoch + CLOCK_MAX_RECORDING_AHEAD)) ] 2>/dev/null; then
+        log "ignored far-future recording stamp: $latest"
+        return 0
+    fi
+    set_clock_forward "latest completed recording $stamp Asia/Shanghai" "$utc_epoch"
+}
+
+restore_clock_from_state() {
+    saved=$(sed -n '1p' "$CLOCK_STATE" 2>/dev/null)
+    is_valid_epoch "$saved" || return 0
+    set_clock_forward "persistent clock state" "$saved"
+}
+
+load_hardware_clock() {
+    before=$(date -u '+%s' 2>/dev/null)
+    if hwclock -s -u >/dev/null 2>&1; then
+        loaded=$(date -u '+%s' 2>/dev/null)
+        # hwclock -s can successfully load a stale RTC and silently roll back
+        # a time already supplied by an earlier network/init service. Preserve
+        # a valid newer kernel clock and refresh the RTC from it.
+        if is_valid_epoch "$before" && ! is_valid_epoch "$loaded"; then
+            if date -u -s "@$before" >/dev/null 2>&1; then
+                hwclock -w -u >/dev/null 2>&1 || true
+                log "ignored invalid hardware RTC; kept newer kernel clock"
+            fi
+        elif is_valid_epoch "$before" && is_valid_epoch "$loaded" &&
+            [ "$loaded" -lt $((before - 300)) ] 2>/dev/null; then
+            if date -u -s "@$before" >/dev/null 2>&1; then
+                hwclock -w -u >/dev/null 2>&1 || true
+                log "ignored stale hardware RTC; kept newer kernel clock"
+            fi
+        elif is_valid_epoch "$loaded"; then
+            log "clock loaded from hardware RTC: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+        else
+            log "hardware RTC returned an invalid date"
+        fi
     else
-        log "clock restore failed for recording stamp: $latest"
+        log "hardware RTC unavailable; keeping kernel clock"
     fi
 }
 
@@ -173,7 +255,11 @@ log "boot sequence started"
 
 # Some board images lose RTC time after power removal. Restore a useful date
 # before starting the recorder so new segments are listed under the right day.
+load_hardware_clock
+restore_clock_from_state
 restore_clock_from_recordings
+current_epoch=$(date -u '+%s' 2>/dev/null)
+save_clock_state "$current_epoch"
 
 # Keep the management webpage reachable at the same wired address after reboot.
 configure_ethernet

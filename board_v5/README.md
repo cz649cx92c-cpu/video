@@ -1,6 +1,6 @@
-# RV1126B board snapshot used by v6
+# RV1126B board snapshot carried by v9
 
-This directory contains the board-facing web snapshot carried forward into the v6 release. It is not a build from the local `video/web` directory.
+This directory contains the board-facing web snapshot carried forward into the v9 release. It is not a build from the local `video/web` directory.
 
 ## Runtime mapping
 
@@ -15,6 +15,12 @@ This directory contains the board-facing web snapshot carried forward into the v
 | `mediamtx-rv1126b.yml` | `/userdata/mediamtx-rv1126b.yml` |
 
 `index.html` loads `/app-network-memory-v5-filter.js`. The board's static file server does not support query strings on asset paths, so the cache-busting version is part of the filename.
+
+## v9 behavior
+
+- The v9 snapshot includes the current board boot script, including hardware RTC recovery, persistent clock state, recording-filename fallback, and future-timestamp guards.
+- The web entrypoint remains `app-network-memory-v5-filter.js`; the active board page still loads `styles-wifi.css`, mirrored from `styles.css`.
+- The board-side recording configuration remains persistent and is intentionally not copied into this source snapshot.
 
 ## v6 behavior
 
