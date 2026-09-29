@@ -75,6 +75,7 @@
             <button class="settings-nav-item is-active" type="button" data-settings-hub-target="network" aria-selected="true">网络连接</button>
             <button class="settings-nav-item" type="button" data-settings-hub-target="main" aria-selected="false">显示码流</button>
             <button class="settings-nav-item" type="button" data-settings-hub-target="recording" aria-selected="false">存储与录像</button>
+            <button class="settings-nav-item" type="button" data-settings-hub-target="ai" aria-selected="false">人员识别</button>
           </nav>
           <div class="settings-content">
             <section class="settings-pane" data-settings-pane="network">
@@ -85,6 +86,19 @@
             </section>
             <section class="settings-pane" data-settings-pane="recording" hidden>
               <h2>存储与录像</h2><p id="hubRecordingSummary">SD 卡持续记录</p>
+            </section>
+            <section class="settings-pane" data-settings-pane="ai" hidden>
+              <h2>人员识别</h2><p id="hubAiSummary">正在读取板端识别状态…</p>
+              <form class="ai-editor" id="aiBody">
+                <label class="recording-toggle">
+                  <span><b>启用人员识别</b><small>在板端使用 RKNN 模型识别画面中的人</small></span>
+                  <input name="enabled" type="checkbox"><i></i>
+                </label>
+                <div class="network-status" id="aiStatus" role="status">正在读取板端识别状态…</div>
+                <div class="settings-submit">
+                  <p></p><button id="saveAi" type="submit">应用识别设置</button>
+                </div>
+              </form>
             </section>
           </div>
         </div>
@@ -145,6 +159,7 @@
             </div>
             <div class="stage-actions">
               <button class="text-button" id="qualityAll" type="button" data-target="main">切换成主码流</button>
+              <button class="text-button focus-action" id="focusAction" type="button" hidden><span>放大查看</span><b aria-hidden="true">↗</b></button>
             </div>
           </div>
           <section class="video-grid" id="videoGrid" aria-live="polite"></section>

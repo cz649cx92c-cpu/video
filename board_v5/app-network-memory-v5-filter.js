@@ -12,6 +12,7 @@ const cameraDefs = [
 const state = {
   selected: "lower-ch1",
   filter: "all",
+  focused: false,
   streams: new Map(),
   quality: new Map(cameraDefs.map((camera) => [camera.id, "sub"])),
   players: new Map(),
@@ -41,6 +42,11 @@ const state = {
   recordingTimelineStartEpoch: 0,
   recordingActiveIndex: -1,
   recordingSeekTarget: null,
+  aiResults: new Map(),
+  aiTracks: new Map(),
+  aiDimensions: new Map(),
+  aiRequests: new Set(),
+  ai: null,
   networkStatus: { wifiConnected: false, apEnabled: false, apiOnline: false },
   networkTrigger: null,
   networkCloseTimer: null,
@@ -77,6 +83,7 @@ function renderFeeds() {
   grid.innerHTML = cameraDefs.map((camera) => `
     <article class="feed ${camera.id === state.selected ? "is-selected" : ""}" data-camera="${camera.id}" data-board="${camera.board}" tabindex="0">
       <video muted autoplay playsinline></video>
+      <canvas class="feed-overlay" aria-hidden="true"></canvas>
       <div class="feed-empty"><i></i><span>WAITING FOR SIGNAL</span></div>
       <div class="feed-shade"></div>
       <div class="feed-meta">
@@ -94,6 +101,7 @@ function renderFeeds() {
 
   grid.querySelectorAll(".feed").forEach((feed) => {
     feed.addEventListener("click", () => selectCamera(feed.dataset.camera));
+    feed.addEventListener("dblclick", () => toggleFocus(feed.dataset.camera));
     feed.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") selectCamera(feed.dataset.camera);
     });
@@ -109,6 +117,19 @@ function selectCamera(cameraId) {
   grid.querySelectorAll(".feed").forEach((feed) => feed.classList.toggle("is-selected", feed.dataset.camera === cameraId));
   updateInspector();
   if (window.innerWidth <= 1000) document.querySelector(".rail-controls")?.classList.add("is-open");
+}
+
+function toggleFocus(cameraId = state.selected) {
+  if (cameraId && cameraId !== state.selected) selectCamera(cameraId);
+  state.focused = !state.focused;
+  grid.classList.toggle("is-focus", state.focused);
+  document.body.classList.toggle("focus-layout", state.focused);
+  const button = document.querySelector("#focusAction");
+  if (!button) return;
+  button.hidden = !state.focused;
+  button.querySelector("span").textContent = state.focused ? "返回视频墙" : "放大查看";
+  button.setAttribute("aria-label", state.focused ? "返回视频墙" : "放大查看");
+  state.aiResults.forEach((_result, id) => drawAiOverlay(id));
 }
 
 function setQuality(cameraId, quality) {
@@ -146,6 +167,243 @@ function updateFeed(cameraId) {
   else stopPlayer(cameraId);
 }
 
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function detectionBox(detection, sourceWidth, sourceHeight) {
+  if (!detection || typeof detection !== "object") return null;
+  let x;
+  let y;
+  let width;
+  let height;
+  const bbox = Array.isArray(detection.bbox) ? detection.bbox : null;
+  if (bbox && bbox.length >= 4) {
+    [x, y, width, height] = bbox.slice(0, 4).map((value) => finiteNumber(value));
+    if (detection.x2 != null || detection.y2 != null) {
+      width -= x;
+      height -= y;
+    }
+  } else {
+    x = finiteNumber(detection.x ?? detection.left ?? detection.x1);
+    y = finiteNumber(detection.y ?? detection.top ?? detection.y1);
+    if (detection.x2 != null || detection.y2 != null) {
+      width = finiteNumber(detection.x2) - x;
+      height = finiteNumber(detection.y2) - y;
+    } else {
+      width = finiteNumber(detection.w ?? detection.width);
+      height = finiteNumber(detection.h ?? detection.height);
+    }
+  }
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  const normalized = Math.max(Math.abs(x), Math.abs(y), Math.abs(width), Math.abs(height)) <= 1.01;
+  if (normalized) {
+    x *= sourceWidth;
+    y *= sourceHeight;
+    width *= sourceWidth;
+    height *= sourceHeight;
+  }
+  const right = Math.min(sourceWidth, Math.max(0, x + width));
+  const bottom = Math.min(sourceHeight, Math.max(0, y + height));
+  x = Math.max(0, Math.min(sourceWidth, x));
+  y = Math.max(0, Math.min(sourceHeight, y));
+  width = right - x;
+  height = bottom - y;
+  return width > 0 && height > 0 ? { x, y, width, height } : null;
+}
+
+const AI_CONFIRM_FRAMES = 2;
+const AI_HOLD_FRAMES = 2;
+const AI_SMOOTH_ALPHA = 0.25;
+
+function boxIou(left, right) {
+  const overlapLeft = Math.max(left.x, right.x);
+  const overlapTop = Math.max(left.y, right.y);
+  const overlapRight = Math.min(left.x + left.width, right.x + right.width);
+  const overlapBottom = Math.min(left.y + left.height, right.y + right.height);
+  const overlap = Math.max(0, overlapRight - overlapLeft) * Math.max(0, overlapBottom - overlapTop);
+  const union = left.width * left.height + right.width * right.height - overlap;
+  return union > 0 ? overlap / union : 0;
+}
+
+function smoothBox(previous, current) {
+  return {
+    x: previous.x + (current.x - previous.x) * AI_SMOOTH_ALPHA,
+    y: previous.y + (current.y - previous.y) * AI_SMOOTH_ALPHA,
+    width: previous.width + (current.width - previous.width) * AI_SMOOTH_ALPHA,
+    height: previous.height + (current.height - previous.height) * AI_SMOOTH_ALPHA,
+  };
+}
+
+function smoothAiResult(cameraId, result) {
+  const sourceWidth = Math.max(1, finiteNumber(result?.width, 320));
+  const sourceHeight = Math.max(1, finiteNumber(result?.height, 180));
+  const previousDimensions = state.aiDimensions.get(cameraId);
+  if (previousDimensions && (previousDimensions.width !== sourceWidth || previousDimensions.height !== sourceHeight)) {
+    state.aiTracks.delete(cameraId);
+  }
+  state.aiDimensions.set(cameraId, { width: sourceWidth, height: sourceHeight });
+  const detections = Array.isArray(result?.detections)
+    ? result.detections
+    : Array.isArray(result?.results) ? result.results : [];
+  const candidates = detections.map((detection) => ({
+    source: detection,
+    box: detectionBox(detection, sourceWidth, sourceHeight),
+  })).filter((item) => item.box);
+  const tracks = state.aiTracks.get(cameraId) || [];
+  const matchedTracks = new Set();
+  const nextTracks = [];
+
+  candidates.forEach((candidate) => {
+    let bestTrack = null;
+    let bestIou = 0;
+    tracks.forEach((track, index) => {
+      if (matchedTracks.has(index)) return;
+      const iou = boxIou(track.box, candidate.box);
+      if (iou > bestIou) {
+        bestIou = iou;
+        bestTrack = { track, index };
+      }
+    });
+    if (bestTrack && bestIou >= 0.12) {
+      const track = bestTrack.track;
+      matchedTracks.add(bestTrack.index);
+      track.box = smoothBox(track.box, candidate.box);
+      track.score = finiteNumber(candidate.source.score ?? candidate.source.confidence, track.score);
+      track.label = candidate.source.class || candidate.source.label || track.label || "person";
+      track.hits += 1;
+      track.misses = 0;
+      track.confirmed = track.confirmed || track.hits >= AI_CONFIRM_FRAMES;
+      nextTracks.push(track);
+    } else {
+      nextTracks.push({
+        box: candidate.box,
+        score: finiteNumber(candidate.source.score ?? candidate.source.confidence, NaN),
+        label: candidate.source.class || candidate.source.label || "person",
+        hits: 1,
+        misses: 0,
+        confirmed: AI_CONFIRM_FRAMES <= 1,
+      });
+    }
+  });
+
+  tracks.forEach((track, index) => {
+    if (matchedTracks.has(index)) return;
+    track.misses += 1;
+    if (track.misses <= AI_HOLD_FRAMES) nextTracks.push(track);
+  });
+
+  state.aiTracks.set(cameraId, nextTracks);
+  return {
+    ...(result || {}),
+    width: sourceWidth,
+    height: sourceHeight,
+    detections: nextTracks.filter((track) => track.confirmed).map((track) => ({
+      x: track.box.x,
+      y: track.box.y,
+      w: track.box.width,
+      h: track.box.height,
+      score: track.score,
+      class: track.label,
+    })),
+  };
+}
+
+function drawAiOverlay(cameraId) {
+  const feed = grid.querySelector(`[data-camera="${cameraId}"]`);
+  const video = feed?.querySelector("video");
+  const canvas = feed?.querySelector(".feed-overlay");
+  const result = state.aiResults.get(cameraId);
+  if (!feed || !video || !canvas) return;
+  const width = feed.clientWidth;
+  const height = feed.clientHeight;
+  if (!width || !height) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+  }
+  const context = canvas.getContext("2d");
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  const detections = Array.isArray(result?.detections)
+    ? result.detections
+    : Array.isArray(result?.results) ? result.results : [];
+  const sourceWidth = Math.max(1, finiteNumber(result?.width, video.videoWidth || 320));
+  const sourceHeight = Math.max(1, finiteNumber(result?.height, video.videoHeight || 180));
+  if (!detections.length) {
+    feed.classList.remove("has-ai");
+    return;
+  }
+  const objectFit = getComputedStyle(video).objectFit;
+  const scale = objectFit === "contain"
+    ? Math.min(width / sourceWidth, height / sourceHeight)
+    : Math.max(width / sourceWidth, height / sourceHeight);
+  const renderedWidth = sourceWidth * scale;
+  const renderedHeight = sourceHeight * scale;
+  const offsetX = (width - renderedWidth) / 2;
+  const offsetY = (height - renderedHeight) / 2;
+  const lineWidth = Math.max(2, Math.min(4, Math.round(Math.min(width, height) / 180)));
+  context.font = "600 11px Segoe UI, sans-serif";
+  context.textBaseline = "top";
+  let drawn = 0;
+  detections.forEach((detection) => {
+    const box = detectionBox(detection, sourceWidth, sourceHeight);
+    if (!box) return;
+    // The video is mirrored by CSS. Mirror the coordinates while keeping labels readable.
+    const mirroredX = sourceWidth - box.x - box.width;
+    const left = offsetX + mirroredX * scale;
+    const top = offsetY + box.y * scale;
+    const boxWidth = box.width * scale;
+    const boxHeight = box.height * scale;
+    context.strokeStyle = "#b7ff3c";
+    context.lineWidth = lineWidth;
+    context.strokeRect(left, top, boxWidth, boxHeight);
+    const score = finiteNumber(detection.score ?? detection.confidence, NaN);
+    const label = `${detection.class || detection.label || "person"}${Number.isFinite(score) ? ` ${(score * 100).toFixed(0)}%` : ""}`;
+    const labelWidth = context.measureText(label).width + 10;
+    const labelTop = Math.max(0, top - 20);
+    context.fillStyle = "rgba(18, 32, 23, .88)";
+    context.fillRect(left, labelTop, labelWidth, 18);
+    context.fillStyle = "#f5ffe7";
+    context.fillText(label, left + 5, labelTop + 3);
+    drawn += 1;
+  });
+  feed.classList.toggle("has-ai", drawn > 0);
+}
+
+function clearAiOverlay(cameraId) {
+  state.aiResults.delete(cameraId);
+  state.aiTracks.delete(cameraId);
+  state.aiDimensions.delete(cameraId);
+  const feed = grid.querySelector(`[data-camera="${cameraId}"]`);
+  const canvas = feed?.querySelector(".feed-overlay");
+  const context = canvas?.getContext("2d");
+  if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+  feed?.classList.remove("has-ai");
+}
+
+async function refreshAiResult(cameraId) {
+  if (state.aiRequests.has(cameraId)) return;
+  state.aiRequests.add(cameraId);
+  try {
+    const response = await fetch(`/api/ai/detections?camera=${encodeURIComponent(cameraId)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    state.aiResults.set(cameraId, smoothAiResult(cameraId, result && typeof result === "object" ? result : { detections: [] }));
+    drawAiOverlay(cameraId);
+  } catch (_error) {
+    // A missing result is normal while the AI channel is starting or disabled.
+  } finally {
+    state.aiRequests.delete(cameraId);
+  }
+}
+
+function refreshAiResults() {
+  state.players.forEach((_player, cameraId) => refreshAiResult(cameraId));
+}
+
 function ensurePlayer(cameraId, quality, url, feed) {
   const existing = state.players.get(cameraId);
   const sourceKey = `${quality}:${url}`;
@@ -174,9 +432,11 @@ function ensurePlayer(cameraId, quality, url, feed) {
       const markPlaying = () => {
         feed.classList.add("is-playing");
         feed.querySelector(".feed-state").textContent = "WebRTC 低延迟";
+        drawAiOverlay(cameraId);
       };
       video.addEventListener("playing", markPlaying, { once: true });
       video.addEventListener("loadeddata", markPlaying, { once: true });
+      video.addEventListener("loadedmetadata", () => drawAiOverlay(cameraId), { once: true });
     },
   });
   player.reader = reader;
@@ -222,6 +482,7 @@ function stopPlayer(cameraId) {
   grid.querySelector(`[data-camera="${cameraId}"]`)?.classList.remove("is-playing");
   state.players.delete(cameraId);
   state.decoder.delete(cameraId);
+  clearAiOverlay(cameraId);
 }
 
 function updateInspector() {
@@ -424,7 +685,7 @@ function closeSettingsHub({ restoreFocus = true } = {}) {
 }
 
 function selectSettingsPanel(target) {
-  const panel = ["network", "main", "recording"].includes(target) ? target : "network";
+  const panel = ["network", "main", "recording", "ai"].includes(target) ? target : "network";
   state.settingsPanel = panel;
   document.querySelectorAll("[data-settings-hub-target]").forEach((button) => {
     const active = button.dataset.settingsHubTarget === panel;
@@ -438,6 +699,8 @@ function selectSettingsPanel(target) {
     Promise.all([loadWifiStatus(), loadApStatus()]);
   } else if (panel === "main") {
     loadSettings();
+  } else if (panel === "ai") {
+    loadAi();
   } else {
     loadRecording();
   }
@@ -665,6 +928,75 @@ async function loadSettings() {
     setSettingsStatus(error.message || "板端配置读取失败", "error");
   } finally {
     saveButton.disabled = !state.configLoaded;
+  }
+}
+
+function updateAiUi(data = state.ai) {
+  const form = document.querySelector("#aiBody");
+  const summary = document.querySelector("#hubAiSummary");
+  const status = document.querySelector("#aiStatus");
+  if (!form || !summary || !status) return;
+  const enabled = data?.enabled === true;
+  form.elements.enabled.checked = enabled;
+  summary.textContent = enabled ? "人员识别已开启 · 板端 RKNN" : "人员识别已关闭";
+  status.textContent = enabled
+    ? `已开启 · ${data.model || "UHD 人员模型"} · ${data.fps || 10} FPS · 阈值 ${data.score_percent || 45}%`
+    : "已关闭 · 不占用板端识别通道";
+  status.dataset.kind = enabled ? "success" : "idle";
+}
+
+async function loadAi() {
+  const status = document.querySelector("#aiStatus");
+  if (status) {
+    status.textContent = "正在读取板端识别状态…";
+    status.dataset.kind = "loading";
+  }
+  try {
+    const response = await fetch("/api/ai", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    state.ai = data;
+    updateAiUi(data);
+  } catch (error) {
+    if (status) {
+      status.textContent = error.message || "无法读取板端识别状态";
+      status.dataset.kind = "error";
+    }
+  }
+}
+
+async function saveAi(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  const status = document.querySelector("#aiStatus");
+  button.disabled = true;
+  if (status) {
+    status.textContent = "正在应用到板端…";
+    status.dataset.kind = "loading";
+  }
+  try {
+    const response = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: form.elements.enabled.checked }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    state.ai = data;
+    updateAiUi(data);
+    if (status && data.rebuilding) {
+      status.textContent = "设置已提交，板端正在重建识别通道…";
+      status.dataset.kind = "loading";
+    }
+    window.setTimeout(loadAi, 700);
+  } catch (error) {
+    if (status) {
+      status.textContent = error.message || "应用识别设置失败";
+      status.dataset.kind = "error";
+    }
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1492,9 +1824,11 @@ document.querySelector("#qualityAll").addEventListener("click", (event) => {
   updateInspector();
   updateQualityAllAction();
 });
+document.querySelector("#focusAction").addEventListener("click", () => toggleFocus());
 document.querySelector("#closeSettings").addEventListener("click", closeSettings);
 document.querySelector("#settingsBackdrop").addEventListener("click", closeSettings);
 document.querySelector("#settingsBody").addEventListener("submit", saveSettings);
+document.querySelector("#aiBody").addEventListener("submit", saveAi);
 document.querySelector("#settingsBody").addEventListener("keydown", (event) => {
   if (event.key !== "Tab") return;
   const controls = [...event.currentTarget.querySelectorAll("button:not(:disabled), select:not(:disabled), input:not(:disabled)")]
@@ -1544,11 +1878,13 @@ document.addEventListener("keydown", (event) => {
   else if (document.querySelector("#settingsBody").dataset.inline !== "true" && !document.querySelector("#settingsBody").hidden) closeSettings();
   else if (document.querySelector("#recordingBody").dataset.inline !== "true" && !document.querySelector("#recordingBody").hidden) closeRecording();
   else if (!document.querySelector("#recordingsBody").hidden) closeRecordings();
+  else if (state.focused) toggleFocus();
 });
 window.addEventListener("resize", () => {
   if (state.settingsTrigger && !document.querySelector("#settingsBody").hidden) placeSettings(state.settingsTrigger);
   if (state.recordingTrigger && !document.querySelector("#recordingBody").hidden) placeDialog(document.querySelector("#recordingBody"), state.recordingTrigger);
   if (state.recordingsTrigger && !document.querySelector("#recordingsBody").hidden) placeDialog(document.querySelector("#recordingsBody"), state.recordingsTrigger);
+  state.aiResults.forEach((_result, cameraId) => drawAiOverlay(cameraId));
 });
 window.addEventListener("beforeunload", () => cameraDefs.forEach((camera) => stopPlayer(camera.id)));
 
@@ -1562,6 +1898,7 @@ setInterval(updateClock, 1000);
 refresh();
 refreshNetworkIndicator();
 setInterval(refreshNetworkIndicator, 5000);
+setInterval(refreshAiResults, 200);
 refreshRecording();
 setInterval(refreshRecording, 2000);
 window.addEventListener("load", () => setTimeout(() => document.querySelector("#boot").classList.add("is-hidden"), 500));

@@ -169,6 +169,36 @@ struct RecordingConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+struct AiConfig {
+    enabled: bool,
+    #[serde(default)]
+    backend: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    fps: u8,
+    #[serde(default)]
+    input_width: u16,
+    #[serde(default)]
+    input_height: u16,
+    #[serde(default)]
+    score_percent: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    det_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    applied_generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rebuilding: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AiToggle {
+    enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct RecordingStorage {
     mounted: bool,
     root: String,
@@ -334,6 +364,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/api/streams", get(api_streams))
         .route("/api/config", get(api_config_get).post(api_config_post))
+        .route("/api/ai", get(api_ai_get).post(api_ai_post))
+        .route("/api/ai/detections", get(api_ai_detections))
         .route(
             "/api/recording",
             get(api_recording_get).post(api_recording_post),
@@ -471,6 +503,103 @@ async fn api_config_post(
             StatusCode::BAD_GATEWAY,
             Json(ApiError {
                 error: format!("板端应用编码配置失败: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_ai_get(State(state): State<AppState>) -> Response {
+    match fetch_board_json::<AiConfig>(
+        &state.board_host,
+        state.status_port,
+        "GET",
+        "/ai.json",
+        None,
+    )
+    .await
+    {
+        Ok(config) => Json(config).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("无法读取板端人员识别状态: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_ai_post(State(state): State<AppState>, Json(toggle): Json<AiToggle>) -> Response {
+    let body = match serde_json::to_vec(&toggle) {
+        Ok(body) => body,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    match fetch_board_json::<AiConfig>(
+        &state.board_host,
+        state.status_port,
+        "POST",
+        "/ai.json",
+        Some(&body),
+    )
+    .await
+    {
+        Ok(config) => Json(config).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("板端应用人员识别设置失败: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_ai_detections(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(camera) = query.get("camera") else {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "缺少 camera 参数".into(),
+            }),
+        )
+            .into_response();
+    };
+    if !valid_camera_id(camera) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ApiError {
+                error: "无效的摄像头编号".into(),
+            }),
+        )
+            .into_response();
+    }
+    let path = format!("/ai/{camera}.json");
+    match fetch_board_json::<serde_json::Value>(
+        &state.board_host,
+        state.status_port,
+        "GET",
+        &path,
+        None,
+    )
+    .await
+    {
+        Ok(data) => Json(data).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                error: format!("无法读取板端人员识别框: {error}"),
             }),
         )
             .into_response(),
