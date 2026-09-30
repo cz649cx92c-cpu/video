@@ -213,6 +213,54 @@ start_ap() {
         ifconfig wlan0 2>/dev/null | grep 'RUNNING' >/dev/null 2>&1
     }
 
+    # AP and station mode cannot share wlan0 on this driver. A stale
+    # wpa_supplicant instance can prevent hostapd from emitting beacons.
+    stop_station_on_ap_iface() {
+        for pid in $(ps 2>/dev/null | grep '[w]pa_supplicant .* -i wlan0' | awk '{print $1}'); do
+            kill "$pid" 2>/dev/null || true
+            log "stopped station wpa_supplicant pid=$pid before AP"
+        done
+    }
+
+    stop_station_on_ap_iface
+
+    ap_security_is_compatible() {
+        [ -f /data/hostapd.conf ] || return 1
+        grep '^wpa=2$' /data/hostapd.conf >/dev/null 2>&1 || return 1
+        grep '^wpa_key_mgmt=WPA-PSK$' /data/hostapd.conf >/dev/null 2>&1 || return 1
+        grep '^rsn_pairwise=CCMP$' /data/hostapd.conf >/dev/null 2>&1 || return 1
+        ! grep '^wpa_pairwise=' /data/hostapd.conf >/dev/null 2>&1
+    }
+
+    # rkwifi_server may write hostapd.conf asynchronously after ap_cfg returns.
+    # Recheck for several seconds and atomically replace the incompatible
+    # WPA3/TKIP mix before starting hostapd, so the driver keeps broadcasting.
+    force_ap_security() {
+        i=0
+        while [ "$i" -lt 10 ]; do
+            if ! ap_security_is_compatible; then
+                ap_pass=$(sed -n 's/^wpa_passphrase=//p' /data/hostapd.conf | head -n 1)
+                [ -n "$ap_pass" ] || ap_pass=12345678
+                ap_tmp=/data/hostapd.conf.apfix
+                sed '/^wpa=/d;/^wpa_passphrase=/d;/^wpa_key_mgmt=/d;/^wpa_pairwise=/d;/^rsn_pairwise=/d' /data/hostapd.conf > "$ap_tmp" || return 1
+                printf '%s\n' "wpa=2" "wpa_passphrase=$ap_pass" "wpa_key_mgmt=WPA-PSK" "rsn_pairwise=CCMP" >> "$ap_tmp"
+                mv -f "$ap_tmp" /data/hostapd.conf || return 1
+                killall hostapd 2>/dev/null || true
+                sleep 1
+                hostapd -B /data/hostapd.conf >> "$LOG" 2>&1 || {
+                    log "failed to restart hostapd with WPA2/CCMP"
+                    return 1
+                }
+                log "normalized AP security to WPA2-PSK/CCMP"
+            elif ! ap_ready; then
+                hostapd -B /data/hostapd.conf >> "$LOG" 2>&1 || true
+            fi
+            sleep 1
+            i=$((i + 1))
+        done
+        ap_security_is_compatible
+    }
+
     # Do not reconfigure an already active wlan0. The IP can remain briefly
     # after hostapd stops, so the control socket and RUNNING flag are required.
     if ! ap_ready; then
@@ -224,6 +272,8 @@ start_ap() {
     else
         log "AP already configured on wlan0"
     fi
+
+    force_ap_security || return 1
 
     i=0
     while [ "$i" -lt 30 ] && ! ap_ready; do
@@ -277,7 +327,7 @@ fi
 # recording remains controlled by /videotuiliu/record.cfg and is not changed here.
 if [ -x "$VIDEO_BIN" ] && ! is_listening 8554; then
     log "starting RTSP source"
-    LD_LIBRARY_PATH=/videotuiliu/lib:/lib:/usr/lib \
+    LD_LIBRARY_PATH=/videotuiliu/lib:/oem/usr/lib:/lib:/usr/lib \
         "$VIDEO_BIN" >> "$VIDEO_LOG" 2>&1 &
 fi
 
