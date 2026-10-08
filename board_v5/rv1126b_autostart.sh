@@ -159,22 +159,50 @@ is_listening() {
     netstat -lnt 2>/dev/null | awk -v p=":$port" '$4 ~ p"$" { found=1 } END { exit(found ? 0 : 1) }'
 }
 
+camera_frame_sample() {
+    # The recorder writes one camera object per line, then atomically renames it.
+    awk '
+        function number(line, key) {
+            sub(".*\\\"" key "\\\":[[:space:]]*", "", line)
+            sub("[^0-9].*", "", line)
+            return line + 0
+        }
+        /"board":/ {
+            node=$0
+            sub(/.*"node":"/, "", node)
+            sub(/".*/, "", node)
+            print node, ($0 ~ /"present":true/), ($0 ~ /"running":true/),
+                number($0, "main_frames"), number($0, "sub_frames")
+        }
+    ' /videotuiliu/run/state.json 2>/dev/null
+}
+
+camera_frames_advanced() {
+    awk '
+        /^---$/ { current=1; next }
+        !current { main[$1]=$4; subframes[$1]=$5; seen[$1]=1; next }
+        $2 == 1 {
+            present++
+            if (!$3 || !seen[$1] || $4 <= main[$1] || $5 <= subframes[$1]) failed=1
+        }
+        END { exit(present > 0 && !failed ? 0 : 1) }
+    '
+}
+
 wait_for_camera_streams() {
+    previous=$(camera_frame_sample)
     i=0
     while [ "$i" -lt 20 ]; do
-        recent=$(tail -n 80 "$LOG" 2>/dev/null)
-        lower_ready=0
-        upper_ready=0
-        echo "$recent" | grep -F "path lower-ch1-sub] stream is available and online" >/dev/null 2>&1 && lower_ready=1
-        echo "$recent" | grep -F "path upper-ch1-sub] stream is available and online" >/dev/null 2>&1 && upper_ready=1
-        if [ "$lower_ready" -eq 1 ] && [ "$upper_ready" -eq 1 ]; then
-            log "camera streams ready before board_web"
+        sleep 1
+        current=$(camera_frame_sample)
+        if printf '%s\n---\n%s\n' "$previous" "$current" | camera_frames_advanced; then
+            log "live camera main/sub frames advancing before board_web"
             return 0
         fi
-        sleep 1
+        previous="$current"
         i=$((i + 1))
     done
-    log "camera streams not ready after 20s; exposing board_web anyway"
+    log "live camera frames not ready after 20s; exposing board_web for recovery"
     return 1
 }
 

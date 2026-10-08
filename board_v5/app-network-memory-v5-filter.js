@@ -156,15 +156,23 @@ function updateFeed(cameraId) {
 
   const quality = state.quality.get(cameraId) || "sub";
   const stream = streamFor(cameraId, quality);
-  const online = stream?.state === "online";
+  const online = state.apiOnline && stream?.state === "online";
   feed.hidden = state.filter !== "all" && camera.board !== state.filter;
-  feed.classList.toggle("is-online", online);
   feed.querySelector(".feed-quality").textContent = quality.toUpperCase();
-  feed.querySelector(".feed-state").textContent = statusText(stream?.state);
-  feed.querySelector(".feed-empty span").textContent = online ? "CONNECTING WEBRTC" : statusEnglish(stream?.state);
 
-  if (online) ensurePlayer(cameraId, quality, stream.webrtc_url, feed);
-  else stopPlayer(cameraId);
+  if (online) {
+    ensurePlayer(cameraId, quality, stream.webrtc_url, feed);
+    const playing = state.players.get(cameraId)?.playing === true;
+    feed.classList.toggle("is-online", playing);
+    feed.classList.toggle("is-connecting", !playing);
+    feed.querySelector(".feed-state").textContent = playing ? "画面正常" : "已检测到，正在连接";
+    feed.querySelector(".feed-empty span").textContent = "CONNECTING WEBRTC";
+  } else {
+    stopPlayer(cameraId);
+    feed.classList.remove("is-online", "is-connecting");
+    feed.querySelector(".feed-state").textContent = state.apiOnline ? statusText(stream?.state) : "设备连接中断";
+    feed.querySelector(".feed-empty span").textContent = state.apiOnline ? statusEnglish(stream?.state) : "DEVICE UNREACHABLE";
+  }
 }
 
 function finiteNumber(value, fallback = 0) {
@@ -411,7 +419,8 @@ function ensurePlayer(cameraId, quality, url, feed) {
   stopPlayer(cameraId);
 
   const video = feed.querySelector("video");
-  const player = { reader: null, sourceKey, video, statsTimer: null, stopping: false };
+  const player = { reader: null, sourceKey, video, statsTimer: null, stopping: false,
+    playing: false, frames: 0, lastFrameAt: performance.now(), checkingStats: false, trackCleanup: null };
   const reader = new MediaMTXWebRTCReader({
     url,
     user: "",
@@ -426,17 +435,24 @@ function ensurePlayer(cameraId, quality, url, feed) {
       window.setTimeout(() => updateFeed(cameraId), 800);
     },
     onTrack: (event) => {
-      if (event.track.kind !== "video") return;
-      video.srcObject = event.streams[0];
+      if (event.track.kind !== "video" || state.players.get(cameraId) !== player) return;
+      player.trackCleanup?.();
+      video.srcObject = event.streams[0] || new MediaStream([event.track]);
       video.play().catch(() => {});
       const markPlaying = () => {
+        if (state.players.get(cameraId) !== player || video.readyState < 2) return;
+        player.playing = true;
         feed.classList.add("is-playing");
-        feed.querySelector(".feed-state").textContent = "WebRTC 低延迟";
+        updateFeed(cameraId);
         drawAiOverlay(cameraId);
       };
       video.addEventListener("playing", markPlaying, { once: true });
       video.addEventListener("loadeddata", markPlaying, { once: true });
-      video.addEventListener("loadedmetadata", () => drawAiOverlay(cameraId), { once: true });
+      player.trackCleanup = () => {
+        video.removeEventListener("playing", markPlaying);
+        video.removeEventListener("loadeddata", markPlaying);
+      };
+      markPlaying();
     },
   });
   player.reader = reader;
@@ -445,13 +461,23 @@ function ensurePlayer(cameraId, quality, url, feed) {
 }
 
 async function updateDecoderStats(cameraId, player) {
-  if (state.players.get(cameraId) !== player) return;
+  if (state.players.get(cameraId) !== player || player.checkingStats) return;
+  player.checkingStats = true;
   try {
     const report = await player.reader.getStats();
+    if (state.players.get(cameraId) !== player) return;
     let inbound = null;
     report.forEach((entry) => {
       if (entry.type === "inbound-rtp" && entry.kind === "video") inbound = entry;
     });
+    const frames = inbound?.framesDecoded || 0;
+    if (frames > player.frames) {
+      player.frames = frames;
+      player.lastFrameAt = performance.now();
+      player.playing = true;
+      grid.querySelector(`[data-camera="${cameraId}"]`)?.classList.add("is-playing");
+      updateFeed(cameraId);
+    }
     if (!inbound) return;
     const implementation = inbound.decoderImplementation || "";
     const explicitHardware = inbound.powerEfficientDecoder === true || /d3d|dxva|media foundation|hardware|nvdec|vaapi|v4l2|videotoolbox/i.test(implementation);
@@ -465,7 +491,14 @@ async function updateDecoderStats(cameraId, player) {
       dropped: inbound.framesDropped || 0,
     });
     if (cameraId === state.selected) updateInspector();
-  } catch (_error) {}
+  } catch (_error) {
+  } finally {
+    player.checkingStats = false;
+    if (state.players.get(cameraId) === player && performance.now() - player.lastFrameAt >= 12000) {
+      stopPlayer(cameraId);
+      updateFeed(cameraId);
+    }
+  }
 }
 
 function stopPlayer(cameraId) {
@@ -473,13 +506,14 @@ function stopPlayer(cameraId) {
   if (!player) return;
   player.stopping = true;
   window.clearInterval(player.statsTimer);
+  player.trackCleanup?.();
   player.reader?.close();
   if (player.video.srcObject) {
     player.video.srcObject.getTracks().forEach((track) => track.stop());
     player.video.srcObject = null;
   }
   player.video.pause();
-  grid.querySelector(`[data-camera="${cameraId}"]`)?.classList.remove("is-playing");
+  grid.querySelector(`[data-camera="${cameraId}"]`)?.classList.remove("is-playing", "is-online", "is-connecting");
   state.players.delete(cameraId);
   state.decoder.delete(cameraId);
   clearAiOverlay(cameraId);
@@ -1743,6 +1777,8 @@ async function refresh() {
     state.apiOnline = false;
     state.networkStatus.apiOnline = false;
     updateNetworkDot();
+    state.streams.clear();
+    cameraDefs.forEach((camera) => updateFeed(camera.id));
     updateOverview();
   } finally {
     window.setTimeout(refresh, 1000);

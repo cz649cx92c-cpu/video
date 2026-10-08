@@ -106,7 +106,8 @@ button { color: inherit; }
 .feed.is-playing .feed-title { color: #fff; text-shadow: 0 1px 4px #000; }
 .feed-title i { width: 5px; height: 5px; border-radius: 50%; background: #4d5551; }
 .feed.is-online .feed-title i { background: var(--accent); box-shadow: 0 0 10px rgba(181,255,61,.8); }
-.feed.is-selected .feed-title i { background: #39c978; box-shadow: 0 0 0 3px rgba(57,201,120,.2), 0 0 11px rgba(57,201,120,.75); }
+.feed.is-connecting .feed-title i { background: #bd821a; box-shadow: none; }
+.feed.is-selected.is-online .feed-title i { background: #39c978; box-shadow: 0 0 0 3px rgba(57,201,120,.2), 0 0 11px rgba(57,201,120,.75); }
 .feed-quality { padding: 4px 6px; background: rgba(255,255,255,.76); color: #334039; font-size: 8px; letter-spacing: .1em; backdrop-filter: blur(8px); }
 .feed.is-playing .feed-quality { background: rgba(13,18,15,.62); color: #f3f6f4; }
 .feed.is-selected .feed-quality { background: var(--accent); color: #fff; box-shadow: 0 2px 9px rgba(20,75,43,.28); }
