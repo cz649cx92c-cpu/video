@@ -206,6 +206,91 @@ wait_for_camera_streams() {
     return 1
 }
 
+find_video_pid() {
+    local comm process_name process
+    for comm in /proc/[0-9]*/comm; do
+        read -r process_name 2>/dev/null < "$comm" || continue
+        [ "$process_name" = videotuiliu ] || continue
+        process=${comm%/comm}
+        [ "$(readlink "$process/exe" 2>/dev/null)" = "$VIDEO_BIN" ] || continue
+        printf '%s\n' "${process##*/}"
+        return 0
+    done
+    return 1
+}
+
+restart_video_source() {
+    local pid="$1" waited=0 new_pid
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$VIDEO_BIN" ] || return 1
+    kill -TERM "$pid" || return 1
+    while [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$VIDEO_BIN" ]; do
+        if [ "$waited" -ge 15 ]; then
+            log "stream watchdog: PID $pid did not exit after SIGTERM"
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if find_video_pid >/dev/null || is_listening 8554; then
+        log "stream watchdog: another RTSP source is already present"
+        return 1
+    fi
+    LD_LIBRARY_PATH=/videotuiliu/lib:/oem/usr/lib:/lib:/usr/lib \
+        nohup "$VIDEO_BIN" >> "$VIDEO_LOG" 2>&1 &
+    new_pid=$!
+    printf '%s\n' "$new_pid" > /videotuiliu/run/videotuiliu.pid
+    log "stream watchdog: started new RTSP source PID $new_pid"
+}
+
+watch_camera_streams() {
+    local lock=/tmp/rv1126b-stream-watch.lock
+    local pid= previous= current= sample= unchanged=0 healthy=0 retries=0 cooldown=0
+    mkdir "$lock" 2>/dev/null || return 0
+    trap "rmdir '$lock'" EXIT
+    trap 'exit 0' INT TERM
+    log "stream watchdog: started PID $$"
+    while sleep 5; do
+        if [ "$cooldown" -gt 0 ]; then
+            cooldown=$((cooldown - 1))
+        fi
+        if [ -z "$pid" ] || [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" != "$VIDEO_BIN" ]; then
+            pid=$(find_video_pid)
+            previous=
+        fi
+        sample=$(camera_frame_sample)
+        if [ -n "$pid" ] && [ "$(printf '%s\n' "$sample" | awk 'NF == 5 { n++ } END { print n+0 }')" = 8 ]; then
+            current=$(printf '%s\n' "$sample" | awk '$2 == 1')
+        else
+            current=
+        fi
+        if [ -z "$current" ] || [ "$current" != "$previous" ]; then
+            unchanged=0
+            if [ -n "$previous" ] && printf '%s\n---\n%s\n' "$previous" "$current" | camera_frames_advanced; then
+                healthy=$((healthy + 1))
+                if [ "$healthy" -ge 12 ]; then
+                    retries=0
+                    cooldown=0
+                fi
+            else
+                healthy=0
+            fi
+        else
+            healthy=0
+            unchanged=$((unchanged + 1))
+            # Restart only when every present channel has stopped producing frames.
+            if [ "$unchanged" -ge 6 ] && [ "$cooldown" -eq 0 ] && [ "$retries" -lt 3 ]; then
+                retries=$((retries + 1))
+                cooldown=$((12 * retries))
+                log "stream watchdog: no main or sub frame progress for 30s, restart $retries/3 (PID $pid)"
+                restart_video_source "$pid"
+                unchanged=0
+                current=
+            fi
+        fi
+        previous=$current
+    done
+}
+
 start_ap() {
     [ -n "$RKWIFI_SERVER" ] || {
         log "rkwifi_server not found; AP was not started"
@@ -328,6 +413,11 @@ start_if_needed() {
     "$@" >> "$LOG" 2>&1 &
 }
 
+if [ "${1:-}" = --watch-streams ]; then
+    watch_camera_streams
+    exit 0
+fi
+
 mkdir -p /userdata 2>/dev/null
 log "boot sequence started"
 
@@ -385,5 +475,6 @@ else
     log "missing executable: $WEB_SERVER"
 fi
 
+nohup /bin/sh "$0" --watch-streams </dev/null >> "$LOG" 2>&1 &
 log "boot sequence finished"
 exit 0
