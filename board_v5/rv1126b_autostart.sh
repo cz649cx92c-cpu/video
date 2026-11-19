@@ -242,11 +242,29 @@ restart_video_source() {
     log "stream watchdog: started new RTSP source PID $new_pid"
 }
 
+board_frame_sample() {
+    # A single camera on a board is not enough to infer a board-wide stall.
+    printf '%s\n' "$1" | awk -v nodes="$2" '
+        $1 ~ nodes { rows[++count]=$0 }
+        END { if (count >= 2) for (i=1; i<=count; i++) print rows[i] }
+    '
+}
+
+camera_stall_ticks() {
+    if [ -n "$2" ] && [ "$1" = "$2" ]; then
+        printf '%s\n' "$(($3 + 1))"
+    else
+        printf '0\n'
+    fi
+}
+
 watch_camera_streams() {
     local lock=/tmp/rv1126b-stream-watch.lock
     local pid= previous= current= sample= unchanged=0 healthy=0 retries=0 cooldown=0
+    local lower= upper= lower_previous= upper_previous=
+    local lower_unchanged=0 upper_unchanged=0 stalled=
     mkdir "$lock" 2>/dev/null || return 0
-    trap "rmdir '$lock'" EXIT
+    trap "rm -r '$lock'" EXIT
     trap 'exit 0' INT TERM
     log "stream watchdog: started PID $$"
     while sleep 5; do
@@ -256,6 +274,8 @@ watch_camera_streams() {
         if [ -z "$pid" ] || [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" != "$VIDEO_BIN" ]; then
             pid=$(find_video_pid)
             previous=
+            lower_previous=
+            upper_previous=
         fi
         sample=$(camera_frame_sample)
         if [ -n "$pid" ] && [ "$(printf '%s\n' "$sample" | awk 'NF == 5 { n++ } END { print n+0 }')" = 8 ]; then
@@ -263,31 +283,40 @@ watch_camera_streams() {
         else
             current=
         fi
-        if [ -z "$current" ] || [ "$current" != "$previous" ]; then
-            unchanged=0
-            if [ -n "$previous" ] && printf '%s\n---\n%s\n' "$previous" "$current" | camera_frames_advanced; then
-                healthy=$((healthy + 1))
-                if [ "$healthy" -ge 12 ]; then
-                    retries=0
-                    cooldown=0
-                fi
-            else
-                healthy=0
+        lower=$(board_frame_sample "$current" '^/dev/video[1-4]$')
+        upper=$(board_frame_sample "$current" '^/dev/video1[2-5]$')
+        unchanged=$(camera_stall_ticks "$previous" "$current" "$unchanged")
+        lower_unchanged=$(camera_stall_ticks "$lower_previous" "$lower" "$lower_unchanged")
+        upper_unchanged=$(camera_stall_ticks "$upper_previous" "$upper" "$upper_unchanged")
+        if [ -n "$previous" ] && printf '%s\n---\n%s\n' "$previous" "$current" | camera_frames_advanced; then
+            healthy=$((healthy + 1))
+            if [ "$healthy" -ge 12 ]; then
+                retries=0
+                cooldown=0
             fi
         else
             healthy=0
-            unchanged=$((unchanged + 1))
-            # Restart only when every present channel has stopped producing frames.
-            if [ "$unchanged" -ge 6 ] && [ "$cooldown" -eq 0 ] && [ "$retries" -lt 3 ]; then
-                retries=$((retries + 1))
-                cooldown=$((12 * retries))
-                log "stream watchdog: no main or sub frame progress for 30s, restart $retries/3 (PID $pid)"
-                restart_video_source "$pid"
-                unchanged=0
-                current=
-            fi
+        fi
+        stalled=
+        if [ "$unchanged" -ge 6 ]; then
+            stalled=all
+        elif [ "$lower_unchanged" -ge 6 ]; then
+            stalled=lower
+        elif [ "$upper_unchanged" -ge 6 ]; then
+            stalled=upper
+        fi
+        if [ -n "$stalled" ] && [ "$cooldown" -eq 0 ] && [ "$retries" -lt 3 ]; then
+            retries=$((retries + 1))
+            cooldown=$((12 * retries))
+            log "stream watchdog: scope=$stalled no main or sub frame progress for 30s, restart $retries/3 (PID $pid)"
+            restart_video_source "$pid"
+            current=
+            lower=
+            upper=
         fi
         previous=$current
+        lower_previous=$lower
+        upper_previous=$upper
     done
 }
 
