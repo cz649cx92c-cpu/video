@@ -885,10 +885,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 @media (max-width: 1000px) {
+  :root { --topbar: 74px; }
+  .shell { grid-template-columns: 196px minmax(0, 1fr); }
+  .rail { padding: 20px 14px 18px; }
+  .rail-controls { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }
+  .rail-control-section { margin-top: 0; }
+  .rail-control-section + .rail-control-section { padding-top: 12px; padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
+  .recording-manage { white-space: nowrap; }
   .inspector { display: contents; }
-  .rail-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-  .rail-control-section + .rail-control-section { padding-top: 0; padding-left: 14px; border-top: 0; border-left: 1px solid rgba(24,43,32,.1); }
   .rail-bottom { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(24,43,32,.1); }
+  .stage { min-height: 0; padding: 18px 16px 22px; }
+  .stage-head { min-height: 0; margin-bottom: 14px; }
+  .video-grid { flex: none; grid-template-rows: none; grid-auto-rows: auto; gap: 10px; }
+  .video-grid .feed { aspect-ratio: 16 / 9; }
+  .video-grid .feed video { position: absolute; inset: 0; }
 }
 
 /* Settings shell follows the familiar left-category / right-content pattern. */
@@ -945,10 +955,32 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .ai-editor .settings-submit button { width: auto; min-width: 136px; }
 
 @media (max-width: 680px) {
-  .rail-controls { grid-template-columns: 1fr; }
-  .rail-control-section + .rail-control-section { padding-top: 14px; padding-left: 0; border-top: 1px solid rgba(24,43,32,.1); border-left: 0; }
+  :root { --topbar: 60px; }
+  .rail { display: grid; padding: 12px 12px 8px; }
+  .filters { gap: 6px; }
+  .filter { justify-content: center; padding: 8px 4px; white-space: nowrap; }
+  .filter:hover { padding-left: 4px; transform: none; }
+  .rail-controls { gap: 8px; margin-top: 10px; }
+  .rail-controls .section-heading { display: none; }
+  .rail-control-section .quality-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; margin-top: 0; }
+  .rail-control-section + .rail-control-section { padding-top: 0; border-top: 0; }
+  .rail-control-section .recording-row { min-height: 42px; margin-top: 0; }
+  .rail-bottom { margin-top: 8px; padding-top: 0; border-top: 0; }
+  .rail-bottom .network-trigger { min-height: 36px; padding-inline: 10px; }
+  .rail-bottom .network-trigger > span { display: inline; }
+  .stage { padding: 14px 12px 18px; }
+  .stage-head { flex-wrap: wrap; align-items: center; gap: 8px; }
+  .stage-head h1 { margin-top: 4px; font-size: clamp(20px, 5.6vw, 26px); }
+  .stage-actions { flex-wrap: wrap; gap: 6px; }
+  .stage-actions .text-button:not([hidden]) { display: inline-flex; }
   .settings-hub { left: 12px; right: 12px; top: 12px; bottom: 12px; width: auto; max-height: none; transform: translateY(12px) scale(.99); transform-origin: center; }
   .settings-hub.is-open { transform: none; }
-  .settings-hub-layout { grid-template-columns: 132px minmax(0, 1fr); min-height: 0; }
-  .settings-content { padding: 20px 16px; }
+  .settings-hub-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .settings-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 6px 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .settings-nav-item { min-width: 0; min-height: 36px; padding-inline: 2px; text-align: center; }
+  .settings-content { padding: 14px 12px; }
+}
+
+@media (min-width: 521px) and (max-width: 680px) {
+  .video-grid:not(.is-focus) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

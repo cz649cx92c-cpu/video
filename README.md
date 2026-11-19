@@ -2,6 +2,14 @@
 
 RV1126B 多摄像头 WebRTC 本地监看台。接收板端 8 个摄像头位置的主、子码流，并在浏览器中自动显示当前存在的摄像头。
 
+## v14 / v2.0.2 更新
+
+- 优化窄窗口和手机布局。视频区填满可用宽度，卡片保持 16:9，录像、码流和设置入口在小屏上更易操作。
+- 关闭人员识别后立即清除残留检测框，忽略已经发出的旧检测请求。
+- 在线摄像头的主、子码流全部连续 30 秒没有新帧时，自动重启推流进程。每轮最多重试 3 次，稳定出帧后恢复重试额度。
+
+详细验证结果见 [v2.0.2 发布说明](RELEASE_NOTES_v2.0.2.md)。
+
 ## v12 / v2.0.1 修复内容
 
 - 修复开机时“检测到信号”被误显示为“画面正常”：连接阶段显示“已检测到，正在连接”，实际收到并解码视频后才显示绿色状态。
@@ -87,6 +95,7 @@ RV1126B 多摄像头 WebRTC 本地监看台。接收板端 8 个摄像头位置�
 | 快照文件 | 板端位置 |
 |---|---|
 | `board_v5/app-network-memory-v5-filter.js` | `/userdata/rv_web/app-network-memory-v5-filter.js` |
+| `board_v5/app-network-memory-v5-ai-fix.js` | `/userdata/rv_web/app-network-memory-v5-ai-fix.js` |
 | `board_v5/index.html` | `/userdata/rv_web/index.html` |
 | `board_v5/styles.css` | `/userdata/rv_web/styles-wifi.css` |
 | `board_v5/rv1126b_autostart.sh` | `/userdata/rv1126b_autostart.sh` |

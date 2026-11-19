@@ -1,6 +1,6 @@
-# RV1126B board snapshot carried by v9
+# RV1126B board snapshot
 
-This directory contains the board-facing web snapshot carried forward into the v9 release. It is not a build from the local `video/web` directory.
+This directory contains the web assets and startup script shipped on the RV1126B board. The `v14` branch carries the `v2.0.2` snapshot.
 
 ## Runtime mapping
 
@@ -8,13 +8,14 @@ This directory contains the board-facing web snapshot carried forward into the v
 |---|---|
 | `app-network-memory-v5.js` | `/userdata/rv_web/app-network-memory-v5.js` |
 | `app-network-memory-v5-filter.js` | `/userdata/rv_web/app-network-memory-v5-filter.js` |
+| `app-network-memory-v5-ai-fix.js` | `/userdata/rv_web/app-network-memory-v5-ai-fix.js` |
 | `index.html` | `/userdata/rv_web/index.html` |
 | `styles.css` | `/userdata/rv_web/styles.css` |
 | `styles.css` | `/userdata/rv_web/styles-wifi.css` |
 | `rv1126b_autostart.sh` | `/userdata/rv1126b_autostart.sh` |
 | `mediamtx-rv1126b.yml` | `/userdata/mediamtx-rv1126b.yml` |
 
-`index.html` loads `/app-network-memory-v5-filter.js`. The board's static file server does not support query strings on asset paths, so the cache-busting version is part of the filename.
+`index.html` loads `/app-network-memory-v5-ai-fix.js` and `/styles-wifi.css`. The board's static file server treats query strings as part of the asset path, so the JavaScript version is part of the filename.
 
 ## v9 behavior
 
